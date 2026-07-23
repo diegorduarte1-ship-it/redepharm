@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RedePharm — Redistribuição Emergencial de Medicamentos</title>
+
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // =====================================================
+  // CONFIGURAÇÃO DO FIREBASE
+  // 1. Acesse https://console.firebase.google.com
+  // 2. Crie um projeto chamado "redepharm"
+  // 3. Adicione um app Web
+  // 4. Copie as credenciais e substitua abaixo:
+  // =====================================================
+  const firebaseConfig = {
+    const firebaseConfig = {
+  apiKey: "AIzaSyATiNzZQZ5pNl0TJ2gdeoXzo5TTBQdCKno",
+  authDomain: "redepharm.firebaseapp.com",
+  projectId: "redepharm",
+  storageBucket: "redepharm.firebasestorage.app",
+  messagingSenderId: "838771206745",
+  appId: "1:838771206745:web:8d379bf1e607f656d01f48"
+};
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // =====================================================
+  // ESTADO LOCAL (espelho do Firestore)
+  // =====================================================
+  window.municipios = [];
+  window.necessidades = [];
+  window.estoques = [];
+  window.solicitacoes = [];
+  window.db = db;
+  window.fsLib = { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy };
+
+  // =====================================================
+  // LISTENERS EM TEMPO REAL
+  // =====================================================
+  onSnapshot(collection(db, "municipios"), snap => {
+    window.municipios = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderizarPainelAtual();
+    atualizarSelectsMunicipios();
+  });
+
+  onSnapshot(collection(db, "estoques"), snap => {
+    window.estoques = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderizarPainelAtual();
+  });
+
+  onSnapshot(query(collection(db, "solicitacoes"), orderBy("data", "desc")), snap => {
+    window.solicitacoes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderizarPainelAtual();
+  });
+
+  // =====================================================
+  // MUNICÍPIOS
+  // =====================================================
+
+  // ===================== NECESSIDADES =====================
+  onSnapshot(query(collection(db, "necessidades"), orderBy("data", "desc")), snap => {
+    window.necessidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (painelAtual === 'necessidades') renderNecessidades();
+    atualizarBadgeNecessidades();
+  });
+
+  window.salvarNecessidade = async function() {
+    const municipioId = document.getElementById('nec-municipio').value;
+    const medicamento = document.getElementById('nec-medicamento').value.trim();
+    const quantidade = document.getElementById('nec-quantidade').value;
+    const justificativa = document.getElementById('nec-justificativa').value.trim();
+    if (!municipioId || !medicamento || !quantidade) { alert('Preencha os campos obrigatórios.'); return; }
+    try {
+      await addDoc(collection(db, "necessidades"), {
+        municipioId,
+        medicamento,
+        quantidade: parseInt(quantidade),
+        urgencia: document.getElementById('nec-urgencia').value,
+        justificativa,
+        status: 'aberta',
+        data: new Date().toISOString()
+      });
+      fecharModal('modal-necessidade');
+    } catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.encerrarNecessidade = async function(id) {
+    if (!confirm('Marcar esta necessidade como atendida?')) return;
+    try { await updateDoc(doc(db, "necessidades", id), { status: 'atendida' }); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.excluirNecessidade = async function(id) {
+    if (!confirm('Excluir esta necessidade?')) return;
+    try { await deleteDoc(doc(db, "necessidades", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.salvarMunicipio = async function() {
+    const nome = document.getElementById('mun-nome').value.trim();
+    const secretario = document.getElementById('mun-secretario').value.trim();
+    const email = document.getElementById('mun-email').value.trim();
+    if (!nome || !secretario || !email) { alert('Preencha os campos obrigatórios.'); return; }
+    try {
+      const editId = document.getElementById("mun-edit-id").value;
+      const dados = { nome, secretario, farmaceutico: document.getElementById("mun-farmaceutico").value.trim(), email, telefone: document.getElementById("mun-telefone").value.trim(), obs: document.getElementById("mun-obs").value.trim() };
+      if (editId) {
+        await updateDoc(doc(db, "municipios", editId), dados);
+      } else {
+        await addDoc(collection(db, "municipios"), {
+        nome,
+        secretario,
+        farmaceutico: document.getElementById('mun-farmaceutico').value.trim(),
+        email,
+        telefone: document.getElementById('mun-telefone').value.trim(),
+        obs: document.getElementById('mun-obs').value.trim(),
+        criadoEm: new Date().toISOString()
+      });
+      }
+      fecharModal("modal-municipio");
+      document.getElementById("mun-edit-id").value = "";
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+  window.editarMunicipio = async function(id) {
+    const m = window.municipios.find(m => m.id === id);
+    if (!m) return;
+    document.getElementById("mun-nome").value = m.nome || "";
+    document.getElementById("mun-secretario").value = m.secretario || "";
+    document.getElementById("mun-farmaceutico").value = m.farmaceutico || "";
+    document.getElementById("mun-email").value = m.email || "";
+    document.getElementById("mun-telefone").value = m.telefone || "";
+    document.getElementById("mun-obs").value = m.obs || "";
+    document.getElementById("mun-edit-id").value = id;
+    document.getElementById("modal-municipio").classList.add("aberto");
+  };
+
+  window.excluirMunicipio = async function(id) {
+    if (!confirm('Remover este município?')) return;
+    try {
+      await deleteDoc(doc(db, "municipios", id));
+      // Remove estoques associados
+      const estMun = window.estoques.filter(e => e.municipioId === id);
+      for (const e of estMun) await deleteDoc(doc(db, "estoques", e.id));
+    } catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  // =====================================================
+  // ESTOQUE
+  // =====================================================
+  window.salvarEstoque = async function() {
+    const municipioId = document.getElementById('est-municipio').value;
+    const medicamento = document.getElementById('est-medicamento').value.trim();
+    const quantidade = document.getElementById('est-quantidade').value;
+    const lote = document.getElementById('est-lote').value.trim();
+    const validade = document.getElementById('est-validade').value;
+    const valor = document.getElementById('est-valor').value;
+    if (!municipioId || !medicamento || !quantidade || !lote || !validade || !valor) { alert('Preencha todos os campos obrigatórios.'); return; }
+    try {
+      await addDoc(collection(db, "estoques"), {
+        municipioId,
+        medicamento,
+        quantidade: parseInt(quantidade),
+        unidade: document.getElementById('est-unidade').value,
+        lote,
+        validade,
+        valor: parseFloat(valor),
+        disponivel: document.getElementById('est-disponivel').value,
+        obs: document.getElementById('est-obs').value.trim(),
+        criadoEm: new Date().toISOString()
+      });
+      fecharModal('modal-estoque');
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+  window.alterarQuantidade = async function(id) {
+    const e = window.estoques.find(e => e.id === id);
+    if (!e) return;
+    const nova = prompt("Quantidade atual: " + e.quantidade + " " + e.unidade + "\nDigite a nova quantidade:");
+    if (nova === null || nova === "") return;
+    const qtd = parseInt(nova);
+    if (isNaN(qtd) || qtd < 0) { alert("Quantidade inválida."); return; }
+    try { await updateDoc(doc(db, "estoques", id), { quantidade: qtd }); }
+    catch(err) { alert("Erro: " + err.message); }
+  };
+
+  window.excluirEstoque = async function(id) {
+    if (!confirm('Remover este item do estoque?')) return;
+    try { await deleteDoc(doc(db, "estoques", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  // =====================================================
+  // SOLICITAÇÕES
+  // =====================================================
+  window.salvarSolicitacao = async function() {
+    const solicitanteId = document.getElementById('sol-solicitante').value;
+    const cedenteId = document.getElementById('sol-cedente').value;
+    const medicamento = document.getElementById('sol-medicamento').value.trim();
+    const quantidade = document.getElementById('sol-quantidade').value;
+    const justificativa = document.getElementById('sol-justificativa').value.trim();
+    if (!solicitanteId || !cedenteId || !medicamento || !quantidade || !justificativa) { alert('Preencha todos os campos obrigatórios.'); return; }
+    if (solicitanteId === cedenteId) { alert('Solicitante e cedente não podem ser o mesmo município.'); return; }
+    const maxDisponivel = document.getElementById('sol-quantidade').getAttribute('max');
+    if (maxDisponivel && parseInt(quantidade) > parseInt(maxDisponivel)) { alert('Quantidade solicitada maior que a disponível em estoque (' + maxDisponivel + ').'); return; }
+    try {
+      await addDoc(collection(db, "solicitacoes"), {
+        solicitanteId,
+        cedenteId,
+        medicamento,
+        quantidade: parseInt(quantidade),
+        modalidade: document.getElementById('sol-modalidade').value,
+        justificativa,
+        processo: document.getElementById('sol-processo').value.trim(),
+        status: 'pendente',
+        data: new Date().toISOString()
+      });
+      fecharModal('modal-solicitacao');
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+
+  window.excluirSolicitacao = async function(id) {
+    if (!confirm('Excluir esta solicitação?')) return;
+    try { await deleteDoc(doc(db, "solicitacoes", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.atualizarStatus = async function(id, novoStatus) {
+    try {
+      const s = (window.solicitacoes||[]).find(s => s.id === id);
+      const dadosUpdate = { status: novoStatus };
+
+      // Deduz do estoque do município cedente quando a solicitação é aprovada ou concluída
+      if ((novoStatus === 'aprovada' || novoStatus === 'concluida') && s && !s.estoqueDeduzido) {
+        const itemEstoque = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento === s.medicamento);
+        if (itemEstoque) {
+          const novaQtd = Math.max(0, parseInt(itemEstoque.quantidade) - parseInt(s.quantidade));
+          await updateDoc(doc(db, "estoques", itemEstoque.id), { quantidade: novaQtd });
+          dadosUpdate.estoqueDeduzido = true;
+        } else {
+          alert('Atenção: não foi encontrado o item correspondente no estoque do município cedente. O status foi atualizado, mas a quantidade não pôde ser deduzida automaticamente.');
+        }
+      }
+
+      await updateDoc(doc(db, "solicitacoes", id), dadosUpdate);
+    } catch(e) { alert('Erro: ' + e.message); }
+  };
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fraunces:ital,wght@0,700;0,900;1,400&display=swap');
+
+  :root {
+    --verde: #005B99; --verde-medio: #0077CC; --verde-claro: #4DAEE8;
+    --verde-bg: #EBF6FF; --creme: #F7F9FC; --borda: #DCE8F0;
+    --texto: #1A2B3C; --cinza: #5A7A8E; --cinza-claro: #F0F5F9;
+    --acento: #00A86B; --acento-bg: #E6F9F2;
+    --vermelho: #D63B2F; --vermelho-bg: #FDF2F1;
+    --azul: #005B99; --azul-bg: #EBF6FF;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: var(--creme); color: var(--texto); font-size: 14px; line-height: 1.6; }
+
+  .header { background: var(--verde); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 56px; position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 900; color: white; display: flex; align-items: center; gap: 10px; }
+  .logo-icon { width: 28px; height: 28px; background: var(--acento); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .logo-sub { font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 400; color: rgba(255,255,255,0.6); display: block; margin-top: -4px; }
+  .badge-admin { background: var(--acento); color: white; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+  .badge-cloud { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.8); font-size: 11px; padding: 3px 10px; border-radius: 20px; }
+
+  .nav { background: white; border-bottom: 2px solid var(--borda); padding: 0 24px; display: flex; gap: 0; overflow-x: auto; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+  .nav-btn { padding: 14px 18px; border: none; background: none; font-size: 13px; font-weight: 500; color: var(--cinza); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.15s; }
+  .nav-btn:hover { color: var(--verde); }
+  .nav-btn.ativo { color: var(--verde); border-bottom-color: var(--verde); font-weight: 600; }
+
+  .main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .card-stat { background: white; border: 1px solid var(--borda); border-radius: 12px; padding: 18px 20px; box-shadow: 0 2px 8px rgba(0,91,153,0.06); transition: box-shadow 0.2s; } .card-stat:hover { box-shadow: 0 4px 16px rgba(0,91,153,0.12); }
+  .card-stat-label { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
+  .card-stat-valor { font-family: 'Fraunces', serif; font-size: 32px; font-weight: 900; color: var(--verde); line-height: 1; }
+  .card-stat-desc { font-size: 12px; color: var(--cinza); margin-top: 4px; }
+
+  .secao { margin-bottom: 28px; }
+  .secao-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .secao-titulo { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 700; color: var(--verde); }
+
+  .btn { padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primario { background: var(--verde); color: white; }
+  .btn-primario:hover { background: var(--verde-medio); }
+  .btn-secundario { background: white; color: var(--verde); border: 1px solid var(--borda); }
+  .btn-secundario:hover { background: var(--verde-bg); }
+  .btn-perigo { background: var(--vermelho-bg); color: var(--vermelho); border: 1px solid #f5c6c2; }
+  .btn-acento { background: var(--acento); color: white; }
+  .btn-acento:hover { background: #b57530; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  .tabela-wrap { background: white; border: 1px solid var(--borda); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { background: var(--cinza-claro); padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: var(--cinza); border-bottom: 1px solid var(--borda); }
+  tbody td { padding: 12px 16px; border-bottom: 1px solid var(--borda); font-size: 13px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--cinza-claro); }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-grupo { display: flex; flex-direction: column; gap: 5px; }
+  .form-grupo.full { grid-column: 1 / -1; }
+  .form-label { font-size: 12px; font-weight: 600; color: var(--cinza); }
+  .form-input, .form-select, .form-textarea { padding: 9px 12px; border: 1px solid var(--borda); border-radius: 7px; font-size: 13px; font-family: 'Inter', sans-serif; color: var(--texto); background: white; outline: none; transition: border-color 0.15s; }
+  .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--verde-claro); box-shadow: 0 0 0 3px rgba(74,148,112,0.1); }
+  .form-textarea { resize: vertical; min-height: 80px; }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.aberto { display: flex; }
+  .modal { background: white; border-radius: 12px; padding: 28px; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+  .modal-titulo { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 700; color: var(--verde); margin-bottom: 20px; }
+  .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--borda); }
+
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-ok { background: #dcfce7; color: #166534; }
+  .badge-alerta { background: var(--acento-bg); color: #92400e; }
+  .badge-critico { background: var(--vermelho-bg); color: var(--vermelho); }
+  .badge-pendente { background: var(--azul-bg); color: var(--azul); }
+  .badge-concluido { background: #dcfce7; color: #166534; }
+  .badge-recusado { background: var(--vermelho-bg); color: var(--vermelho); }
+
+  .busca-wrap { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .busca-input { flex: 1; min-width: 200px; padding: 9px 12px 9px 36px; border: 1px solid var(--borda); border-radius: 7px; font-size: 13px; font-family: 'Inter', sans-serif; background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%236b7c75' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242 1.656a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z'/%3E%3C/svg%3E") no-repeat 10px center; outline: none; }
+  .busca-input:focus { border-color: var(--verde-claro); }
+
+  .vazio { text-align: center; padding: 48px 20px; color: var(--cinza); }
+  .vazio-icon { font-size: 40px; margin-bottom: 12px; }
+  .vazio-titulo { font-size: 15px; font-weight: 600; color: var(--texto); margin-bottom: 6px; }
+
+  .alerta { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 10px; }
+  .alerta-info { background: var(--azul-bg); color: #1e40af; border: 1px solid #bfdbfe; }
+  .alerta-aviso { background: var(--acento-bg); color: #92400e; border: 1px solid #fde68a; }
+
+  .painel { display: none; }
+  .painel.ativo { display: block; }
+
+  .boas-vindas { background: linear-gradient(135deg, #003F6B 0%, #005B99 50%, #0077CC 100%); border-radius: 12px; padding: 24px 28px; color: white; margin-bottom: 24px; position: relative; overflow: hidden; box-shadow: 0 4px 20px rgba(0,91,153,0.25); }
+  .boas-vindas::after { content: '🏥'; position: absolute; right: 24px; top: 50%; transform: translateY(-50%); font-size: 56px; opacity: 0.2; }
+  .boas-vindas h2 { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 900; margin-bottom: 6px; }
+  .boas-vindas p { font-size: 13px; opacity: 0.8; }
+
+  .sol-card { background: white; border: 1px solid var(--borda); border-radius: 10px; padding: 16px 20px; margin-bottom: 12px; }
+  .sol-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .sol-card-titulo { font-weight: 600; font-size: 14px; }
+  .sol-card-meta { font-size: 12px; color: var(--cinza); margin-top: 3px; }
+  .sol-card-body { font-size: 13px; color: var(--cinza); margin-bottom: 12px; }
+  .sol-card-footer { display: flex; gap: 8px; }
+
+  /* Banner de configuração */
+
+  @media (max-width: 600px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .cards-grid { grid-template-columns: 1fr 1fr; }
+    .main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header" style="background:linear-gradient(135deg,#003F6B 0%,#005B99 60%,#0077CC 100%);box-shadow:0 2px 12px rgba(0,0,0,0.15)">
+  <div class="logo">
+    <div style="width:36px;height:36px;background:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.15)">⚕️</div>
+    <div>
+      <span style="font-family:Inter,sans-serif;font-size:18px;font-weight:700;color:white;letter-spacing:-0.5px">Rede<span style="color:#7DD3FC">Pharm</span></span>
+      <span class="logo-sub" style="color:rgba(255,255,255,0.65);font-size:10px;letter-spacing:0.5px">REDISTRIBUIÇÃO EMERGENCIAL · SUS · MINAS GERAIS</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.8);font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,255,255,0.2)">☁ Firebase</span>
+    <span style="background:#00A86B;color:white;font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px">Administrador</span>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="nav-btn ativo" onclick="mostrarPainel('dashboard', this)">📊 Dashboard</button>
+  <button class="nav-btn" onclick="mostrarPainel('municipios', this)">🏙 Municípios</button>
+  <button class="nav-btn" onclick="mostrarPainel('estoque', this)">💊 Estoque</button>
+  <button class="nav-btn" onclick="mostrarPainel('consulta', this)">🔍 Consultar</button>
+  <button class="nav-btn" onclick="mostrarPainel('solicitacoes', this)">📋 Solicitações</button>
+  <button class="nav-btn" onclick="mostrarPainel('necessidades', this)">🚨 Necessidades</button>
+</div>
+
+<div class="main">
+
+  <!-- BANNER DE CONFIGURAÇÃO -->
+
+  <!-- DASHBOARD -->
+  <div id="painel-dashboard" class="painel ativo">
+    <div class="boas-vindas">
+      <h2>RedePharm · Nuvem</h2>
+      <p>Dados sincronizados em tempo real entre todos os municípios participantes.</p>
+    </div>
+    <div class="cards-grid" id="cards-stats"></div>
+    <div class="secao">
+      <div class="secao-header"><div class="secao-titulo">Solicitações Recentes</div></div>
+      <div class="secao">
+      <div class="secao-header"><div class="secao-titulo">📊 Situação por Município</div></div>
+      <div style="background:white;border:1px solid var(--borda);border-radius:10px;padding:20px">
+        <canvas id="grafico-municipios" height="120"></canvas>
+      </div>
+    </div>
+    <div class="secao">
+      <div class="secao-header"><div class="secao-titulo">📈 Transferências por Status</div></div>
+<div class="secao"><div class="secao-header"><div class="secao-titulo">Solicitações Recentes</div></div><div id="dashboard-solicitacoes"></div></div>
+    </div>
+    <div class="secao">
+      <div class="secao-header"><div class="secao-titulo">Itens com Validade Próxima</div></div>
+      <div id="dashboard-validade"></div>
+    </div>
+  </div>
+
+  <!-- MUNICÍPIOS -->
+  <div id="painel-municipios" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">Municípios Cadastrados</div>
+      <button class="btn btn-primario" onclick="abrirModalMunicipio()">+ Novo Município</button>
+    </div>
+    <div class="busca-wrap">
+      <input type="text" class="busca-input" placeholder="Buscar município..." oninput="filtrarMunicipios(this.value)">
+    </div>
+    <div class="tabela-wrap">
+      <table>
+        <thead><tr><th>Município</th><th>Responsável</th><th>Contato</th><th>Itens</th><th>Ações</th></tr></thead>
+        <tbody id="tabela-municipios"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ESTOQUE -->
+  <div id="painel-estoque" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">Registro de Estoque</div>
+      <button class="btn btn-primario" onclick="abrirModalEstoque()">+ Registrar Item</button>
+    </div>
+    <div class="busca-wrap">
+      <input type="text" class="busca-input" placeholder="Buscar medicamento, município..." oninput="filtrarEstoque(this.value)" id="busca-estoque">
+      <select class="form-select" style="width:180px" onchange="filtrarEstoqueMunicipio(this.value)" id="filtro-municipio-estoque">
+        <option value="">Todos os municípios</option>
+      </select>
+    </div>
+    <div class="tabela-wrap">
+      <table>
+        <thead><tr><th>Medicamento</th><th>Município</th><th>Quantidade</th><th>Lote</th><th>Validade</th><th>Valor Unit.</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody id="tabela-estoque"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CONSULTA -->
+  <div id="painel-consulta" class="painel">
+    <div class="secao-titulo" style="margin-bottom:16px">🔍 Consultar Disponibilidade Regional</div>
+    <div class="alerta alerta-info">Consulte quais municípios possuem determinado medicamento disponível para empréstimo ou permuta.</div>
+    <div class="busca-wrap">
+      <input type="text" class="busca-input" id="busca-consulta" placeholder="Digite o nome do medicamento..." oninput="consultarDisponibilidade(this.value)" style="flex:1">
+    </div>
+    <div id="resultado-consulta"></div>
+  </div>
+
+  <!-- SOLICITAÇÕES -->
+  <div id="painel-solicitacoes" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">Solicitações de Transferência</div>
+      <button class="btn btn-acento" onclick="abrirModalSolicitacao()">+ Nova Solicitação</button>
+    </div>
+    <div class="busca-wrap">
+      <select class="form-select" style="width:180px" onchange="filtrarSolicitacoes(this.value)">
+        <option value="">Todos os status</option>
+        <option value="pendente">Pendentes</option>
+        <option value="aprovada">Aprovadas</option>
+        <option value="concluida">Concluídas</option>
+        <option value="recusada">Recusadas</option>
+      </select>
+    </div>
+    <div id="lista-solicitacoes"></div>
+  </div>
+
+</div>
+
+
+  <!-- NECESSIDADES -->
+  <div id="painel-necessidades" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">🚨 Mural de Necessidades</div>
+      <button class="btn btn-acento" onclick="abrirModalNecessidade()">+ Publicar Necessidade</button>
+    </div>
+    <div class="alerta alerta-aviso">
+      Municípios com necessidade urgente de medicamentos ou insumos podem publicar aqui. Os demais municípios da rede visualizam e podem abrir uma solicitação diretamente.
+    </div>
+    <div id="lista-necessidades"></div>
+  </div>
+
+<!-- MODAIS -->
+<div class="modal-overlay" id="modal-municipio">
+  <div class="modal">
+    <div class="modal-titulo">🏙 Cadastrar Município</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Nome do Município *</label><input type="text" class="form-input" id="mun-nome" placeholder="Ex: Itajubá"></div>
+      <div class="form-grupo"><label class="form-label">Secretário(a) de Saúde *</label><input type="text" class="form-input" id="mun-secretario"></div>
+      <div class="form-grupo"><label class="form-label">Farmacêutico Responsável (CRF)</label><input type="text" class="form-input" id="mun-farmaceutico"></div>
+      <div class="form-grupo"><label class="form-label">E-mail *</label><input type="email" class="form-input" id="mun-email"></div>
+      <div class="form-grupo"><label class="form-label">Telefone</label><input type="text" class="form-input" id="mun-telefone"></div>
+      <div class="form-grupo full"><label class="form-label">Observações</label><textarea class="form-textarea" id="mun-obs"></textarea></div>
+      <input type="hidden" id="mun-edit-id" value="">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-municipio')">Cancelar</button>
+      <button class="btn btn-primario" onclick="salvarMunicipio()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-estoque">
+  <div class="modal">
+    <div class="modal-titulo">💊 Registrar Item no Estoque</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="est-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo (denominação genérica) *</label><input type="text" class="form-input" id="est-medicamento"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="est-quantidade" min="0"></div>
+      <div class="form-grupo"><label class="form-label">Unidade</label><select class="form-select" id="est-unidade"><option>comprimidos</option><option>cápsulas</option><option>frascos</option><option>ampolas</option><option>unidades</option><option>caixas</option><option>sachês</option></select></div>
+      <div class="form-grupo"><label class="form-label">Lote *</label><input type="text" class="form-input" id="est-lote"></div>
+      <div class="form-grupo"><label class="form-label">Validade *</label><input type="date" class="form-input" id="est-validade"></div>
+      <div class="form-grupo"><label class="form-label">Valor unitário (R$) *</label><input type="number" class="form-input" id="est-valor" step="0.01" min="0"></div>
+      <div class="form-grupo"><label class="form-label">Disponível para empréstimo?</label><select class="form-select" id="est-disponivel"><option value="sim">Sim</option><option value="nao">Não (uso interno)</option></select></div>
+      <div class="form-grupo full"><label class="form-label">Observações</label><textarea class="form-textarea" id="est-obs"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-estoque')">Cancelar</button>
+      <button class="btn btn-primario" onclick="salvarEstoque()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-solicitacao">
+  <div class="modal">
+    <div class="modal-titulo">📋 Nova Solicitação de Transferência</div>
+    <div class="form-grid">
+      <div class="form-grupo"><label class="form-label">Município Solicitante *</label><select class="form-select" id="sol-solicitante"></select></div>
+      <div class="form-grupo"><label class="form-label">Município Cedente *</label><select class="form-select" id="sol-cedente" onchange="atualizarMedicamentosDisponiveis()"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento Solicitado *</label><select class="form-select" id="sol-medicamento" onchange="atualizarQtdDisponivel()"><option value="">Selecione o município cedente primeiro...</option></select></div>
+      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="sol-quantidade" min="0"><small id="sol-qtd-disponivel" style="display:block;color:var(--cinza);margin-top:4px;font-size:12px"></small></div>
+      <div class="form-grupo"><label class="form-label">Modalidade *</label><select class="form-select" id="sol-modalidade"><option value="emprestimo">Empréstimo</option><option value="permuta">Permuta</option><option value="doacao">Doação</option></select></div>
+      <div class="form-grupo full"><label class="form-label">Justificativa *</label><textarea class="form-textarea" id="sol-justificativa"></textarea></div>
+      <div class="form-grupo full"><label class="form-label">Processo licitatório em andamento</label><input type="text" class="form-input" id="sol-processo" placeholder="Ex: Dispensa nº 015/2026"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-solicitacao')">Cancelar</button>
+      <button class="btn btn-acento" onclick="salvarSolicitacao()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================== ESTADO E NAVEGAÇÃO =====================
+let painelAtual = 'dashboard';
+window.painelAtual = painelAtual;
+let filtroEstoqueTexto = '';
+let filtroEstoqueMun = '';
+
+window.renderizarPainelAtual = function() {
+  renderizarPainel(painelAtual);
+  atualizarSelectsMunicipios();
+};
+
+function mostrarPainel(id, btn) {
+  document.querySelectorAll('.painel').forEach(p => p.classList.remove('ativo'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('ativo'));
+  document.getElementById('painel-' + id).classList.add('ativo');
+  btn.classList.add('ativo');
+  painelAtual = id;
+  window.painelAtual = id;
+  renderizarPainel(id);
+}
+
+function renderizarPainel(id) {
+  if (id === 'dashboard') renderDashboard();
+  if (id === 'municipios') renderMunicipios();
+  if (id === 'estoque') { atualizarSelectsMunicipios(); aplicarFiltroEstoque(); }
+  if (id === 'solicitacoes') renderSolicitacoes();
+  if (id === 'consulta') { }
+  if (id === 'necessidades') { if (typeof renderNecessidades === 'function') renderNecessidades(); }
+  if (id === 'necessidades') renderNecessidades();
+}
+
+// ===================== DASHBOARD =====================
+function renderDashboard() {
+  const hoje = new Date();
+  const em90 = new Date(hoje); em90.setDate(hoje.getDate() + 90);
+  const vencendo = (window.estoques || []).filter(e => new Date(e.validade) <= em90 && new Date(e.validade) >= hoje);
+  const pendentes = (window.solicitacoes || []).filter(s => s.status === 'pendente');
+
+  document.getElementById('cards-stats').innerHTML = `
+    <div class="card-stat"><div class="card-stat-label">Municípios</div><div class="card-stat-valor">${(window.municipios||[]).length}</div><div class="card-stat-desc">na rede</div></div>
+    <div class="card-stat"><div class="card-stat-label">Itens em Estoque</div><div class="card-stat-valor">${(window.estoques||[]).length}</div><div class="card-stat-desc">registros ativos</div></div>
+    <div class="card-stat"><div class="card-stat-label">Solicitações</div><div class="card-stat-valor">${(window.solicitacoes||[]).length}</div><div class="card-stat-desc">${pendentes.length} pendente(s)</div></div>
+    <div class="card-stat"><div class="card-stat-label">Validade Próxima</div><div class="card-stat-valor" style="color:${vencendo.length > 0 ? 'var(--acento)' : 'var(--verde)'}">${vencendo.length}</div><div class="card-stat-desc">vencendo em 90 dias</div></div>
+  `;
+
+  renderGraficos();
+  const recentes = [...(window.solicitacoes||[])].slice(0,3);
+  document.getElementById('dashboard-solicitacoes').innerHTML = recentes.length === 0
+    ? `<div class="vazio"><div class="vazio-icon">📋</div><div class="vazio-titulo">Nenhuma solicitação ainda</div></div>`
+    : recentes.map(s => solCard(s, true)).join('');
+
+  document.getElementById('dashboard-validade').innerHTML = vencendo.length === 0
+    ? `<div class="tabela-wrap"><div style="padding:24px;text-align:center;color:var(--cinza)">Nenhum item com validade próxima ✅</div></div>`
+    : `<div class="tabela-wrap"><table><thead><tr><th>Medicamento</th><th>Município</th><th>Qtd</th><th>Validade</th><th>Dias</th></tr></thead><tbody>${vencendo.map(e => {
+        const mun = (window.municipios||[]).find(m => m.id === e.municipioId);
+        const dias = Math.ceil((new Date(e.validade) - hoje) / 86400000);
+        return `<tr><td><strong>${e.medicamento}</strong></td><td>${mun ? mun.nome : '—'}</td><td>${e.quantidade} ${e.unidade}</td><td>${formatarData(e.validade)}</td><td><span class="badge badge-alerta">${dias}d</span></td></tr>`;
+      }).join('')}</tbody></table></div>`;
+}
+
+// ===================== MUNICÍPIOS =====================
+let filtroMun = '';
+function renderMunicipios() {
+  const lista = (window.municipios||[]).filter(m => m.nome.toLowerCase().includes(filtroMun.toLowerCase()));
+  const tbody = document.getElementById('tabela-municipios');
+  if (!tbody) return;
+  tbody.innerHTML = lista.length === 0
+    ? `<tr><td colspan="5"><div class="vazio"><div class="vazio-icon">🏙</div><div class="vazio-titulo">Nenhum município cadastrado</div></div></td></tr>`
+    : lista.map(m => {
+        const itens = (window.estoques||[]).filter(e => e.municipioId === m.id).length;
+        return `<tr><td><strong>${m.nome}</strong></td><td>${m.secretario}<br><span style="font-size:12px;color:var(--cinza)">${m.farmaceutico||''}</span></td><td>${m.email}<br><span style="font-size:12px;color:var(--cinza)">${m.telefone||''}</span></td><td><span class="badge badge-ok">${itens} itens</span></td><td style="display:flex;gap:6px"><button class="btn btn-secundario btn-sm" onclick="editarMunicipio('${m.id}')">✏ Editar</button><button class="btn btn-perigo btn-sm" onclick="excluirMunicipio('${m.id}')">✕ Remover</button></td></tr>`;
+      }).join('');
+}
+
+function filtrarMunicipios(v) { filtroMun = v; renderMunicipios(); }
+
+function abrirModalMunicipio() {
+  ['mun-nome','mun-secretario','mun-farmaceutico','mun-email','mun-telefone','mun-obs'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('modal-municipio').classList.add('aberto');
+}
+
+// ===================== ESTOQUE =====================
+function renderEstoque() {
+  atualizarSelectsMunicipios();
+  aplicarFiltroEstoque();
+}
+
+function aplicarFiltroEstoque() {
+  const tbody = document.getElementById('tabela-estoque');
+  if (!tbody) return;
+  const hoje = new Date();
+  const em90 = new Date(hoje); em90.setDate(hoje.getDate() + 90);
+
+  const lista = (window.estoques||[]).filter(e => {
+    const mun = (window.municipios||[]).find(m => m.id === e.municipioId);
+    const txt = (e.medicamento + ' ' + (mun ? mun.nome : '')).toLowerCase();
+    return txt.includes(filtroEstoqueTexto.toLowerCase()) &&
+      (filtroEstoqueMun === '' || e.municipioId === filtroEstoqueMun);
+  });
+
+  tbody.innerHTML = lista.length === 0
+    ? `<tr><td colspan="8"><div class="vazio"><div class="vazio-icon">💊</div><div class="vazio-titulo">Nenhum item encontrado</div></div></td></tr>`
+    : lista.map(e => {
+        const mun = (window.municipios||[]).find(m => m.id === e.municipioId);
+        const val = new Date(e.validade);
+        let badge = val < hoje ? '<span class="badge badge-critico">Vencido</span>'
+          : val <= em90 ? '<span class="badge badge-alerta">Vence em breve</span>'
+          : e.disponivel === 'sim' ? '<span class="badge badge-ok">Disponível</span>'
+          : '<span class="badge">Uso interno</span>';
+        return `<tr><td><strong>${e.medicamento}</strong></td><td>${mun ? mun.nome : '—'}</td><td>${e.quantidade} ${e.unidade}</td><td style="font-size:12px;color:var(--cinza)">${e.lote}</td><td>${formatarData(e.validade)}</td><td>R$ ${parseFloat(e.valor).toFixed(2)}</td><td>${badge}</td><td style="display:flex;gap:6px"><button class="btn btn-secundario btn-sm" onclick="alterarQuantidade('${e.id}')">✏ Qtd</button><button class="btn btn-perigo btn-sm" onclick="excluirEstoque('${e.id}')">✕</button></td></tr>`;
+      }).join('');
+}
+
+function filtrarEstoque(v) { filtroEstoqueTexto = v; aplicarFiltroEstoque(); }
+function filtrarEstoqueMunicipio(v) { filtroEstoqueMun = v; aplicarFiltroEstoque(); }
+
+function abrirModalEstoque() {
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('est-municipio').innerHTML = opts;
+  ['est-medicamento','est-quantidade','est-lote','est-validade','est-valor','est-obs'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('est-disponivel').value = 'sim';
+  document.getElementById('modal-estoque').classList.add('aberto');
+}
+
+// ===================== CONSULTA =====================
+function consultarDisponibilidade(busca) {
+  const div = document.getElementById('resultado-consulta');
+  if (!busca || busca.length < 2) { div.innerHTML = ''; return; }
+  const hoje = new Date();
+  const res = (window.estoques||[]).filter(e => e.disponivel === 'sim' && new Date(e.validade) > hoje && e.medicamento.toLowerCase().includes(busca.toLowerCase()));
+  div.innerHTML = res.length === 0
+    ? `<div class="vazio"><div class="vazio-icon">🔍</div><div class="vazio-titulo">Nenhum município possui "${busca}" disponível no momento.</div></div>`
+    : `<div style="margin-bottom:12px;font-size:13px;color:var(--cinza)">${res.length} resultado(s) para "<strong>${busca}</strong>"</div>
+      <div class="tabela-wrap"><table><thead><tr><th>Medicamento</th><th>Município</th><th>Disponível</th><th>Lote</th><th>Validade</th><th>Valor Unit.</th><th>Contato</th></tr></thead><tbody>${res.map(e => {
+        const mun = (window.municipios||[]).find(m => m.id === e.municipioId);
+        return `<tr><td><strong>${e.medicamento}</strong></td><td>${mun ? mun.nome : '—'}</td><td>${e.quantidade} ${e.unidade}</td><td style="font-size:12px;color:var(--cinza)">${e.lote}</td><td>${formatarData(e.validade)}</td><td>R$ ${parseFloat(e.valor).toFixed(2)}</td><td style="font-size:12px">${mun ? mun.email + '<br>' + mun.telefone : '—'}</td></tr>`;
+      }).join('')}</tbody></table></div>
+      <div style="margin-top:12px"><button class="btn btn-acento" onclick="mostrarPainel('solicitacoes', document.querySelectorAll('.nav-btn')[4])">📋 Registrar Solicitação</button></div>`;
+}
+
+// ===================== SOLICITAÇÕES =====================
+let filtroSolStatus = '';
+function renderSolicitacoes() {
+  const lista = filtroSolStatus ? (window.solicitacoes||[]).filter(s => s.status === filtroSolStatus) : (window.solicitacoes||[]);
+  const div = document.getElementById('lista-solicitacoes');
+  if (!div) return;
+  div.innerHTML = lista.length === 0
+    ? `<div class="vazio"><div class="vazio-icon">📋</div><div class="vazio-titulo">Nenhuma solicitação encontrada</div></div>`
+    : lista.map(s => solCard(s, false)).join('');
+}
+
+function filtrarSolicitacoes(v) { filtroSolStatus = v; renderSolicitacoes(); }
+
+function solCard(s, compacto) {
+  const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
+  const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
+  const badges = { pendente: 'badge-pendente', aprovada: 'badge-ok', concluida: 'badge-concluido', recusada: 'badge-recusado' };
+  const labels = { pendente: 'Pendente', aprovada: 'Aprovada', concluida: 'Concluída', recusada: 'Recusada' };
+  const mods = { emprestimo: 'Empréstimo', permuta: 'Permuta', doacao: 'Doação' };
+  const botoes = s.status === 'pendente' && !compacto
+    ? `<button class="btn btn-primario btn-sm" onclick="atualizarStatus('${s.id}', 'aprovada')">✓ Aprovar</button>
+       <button class="btn btn-secundario btn-sm" onclick="atualizarStatus('${s.id}', 'concluida')">✔ Concluir</button>
+       <button class="btn btn-perigo btn-sm" onclick="atualizarStatus('${s.id}', 'recusada')">✕ Recusar</button>` : '';
+  return `<div class="sol-card">
+    <div class="sol-card-header"><div><div class="sol-card-titulo">${s.medicamento} — ${s.quantidade} unidades</div><div class="sol-card-meta">${mods[s.modalidade]||s.modalidade} · ${formatarDataHora(s.data)}</div></div><span class="badge ${badges[s.status]||''}">${labels[s.status]||s.status}</span></div>
+    <div class="sol-card-body"><strong>Solicitante:</strong> ${sol ? sol.nome : '—'} → <strong>Cedente:</strong> ${ced ? ced.nome : '—'}${s.processo ? '<br><strong>Processo:</strong> ' + s.processo : ''}</div>
+    ${botoes ? `<div class="sol-card-footer">${botoes}</div>` : ''}
+    <div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-secundario btn-sm" onclick="gerarTermoPDF('${s.id}')">📄 Gerar Termo PDF</button><button class="btn btn-perigo btn-sm" onclick="excluirSolicitacao('${s.id}')">🗑 Excluir</button></div>
+  </div>`;
+}
+
+function abrirModalSolicitacao() {
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('sol-solicitante').innerHTML = opts;
+  document.getElementById('sol-cedente').innerHTML = opts;
+  document.getElementById('sol-medicamento').innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+  document.getElementById('sol-qtd-disponivel').textContent = '';
+  ['sol-quantidade','sol-justificativa','sol-processo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('modal-solicitacao').classList.add('aberto');
+}
+
+function atualizarMedicamentosDisponiveis() {
+  const cedenteId = document.getElementById('sol-cedente').value;
+  const select = document.getElementById('sol-medicamento');
+  const hoje = new Date();
+  document.getElementById('sol-qtd-disponivel').textContent = '';
+  document.getElementById('sol-quantidade').value = '';
+
+  if (!cedenteId) {
+    select.innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+    return;
+  }
+
+  const disponiveis = (window.estoques||[]).filter(e =>
+    e.municipioId === cedenteId &&
+    e.disponivel === 'sim' &&
+    parseInt(e.quantidade) > 0 &&
+    new Date(e.validade) >= hoje
+  );
+
+  if (disponiveis.length === 0) {
+    select.innerHTML = '<option value="">Nenhum item disponível para este município</option>';
+    return;
+  }
+
+  select.innerHTML = '<option value="">Selecione...</option>' + disponiveis.map(e =>
+    `<option value="${e.medicamento}" data-qtd="${e.quantidade}" data-unidade="${e.unidade||''}">${e.medicamento} (${e.quantidade} ${e.unidade||'un.'} disponíveis · val. ${formatarData(e.validade)})</option>`
+  ).join('');
+}
+
+function atualizarQtdDisponivel() {
+  const select = document.getElementById('sol-medicamento');
+  const opt = select.options[select.selectedIndex];
+  const hint = document.getElementById('sol-qtd-disponivel');
+  const qtdInput = document.getElementById('sol-quantidade');
+  if (!opt || !opt.value) { hint.textContent = ''; qtdInput.removeAttribute('max'); return; }
+  const qtd = opt.getAttribute('data-qtd');
+  const unidade = opt.getAttribute('data-unidade') || 'un.';
+  hint.textContent = `Disponível: ${qtd} ${unidade}`;
+  qtdInput.setAttribute('max', qtd);
+}
+
+
+// ===================== GERAR TERMO PDF =====================
+function gerarTermoPDF(id) {
+  const s = (window.solicitacoes||[]).find(s => s.id === id);
+  if (!s) return;
+  const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
+  const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
+  const mods = { emprestimo: 'Empréstimo (devolução do mesmo item)', permuta: 'Permuta (troca por item equivalente)', doacao: 'Doação' };
+  const data = new Date().toLocaleDateString('pt-BR');
+  
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+  <title>Termo de Cessão Emergencial</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; line-height: 1.8; color: #1a2420; padding: 40px; max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 16px; text-align: center; text-transform: uppercase; margin-bottom: 6px; }
+    .sub { text-align: center; font-size: 12px; color: #666; margin-bottom: 30px; }
+    .secao { margin-bottom: 20px; }
+    .secao-titulo { font-weight: bold; font-size: 13px; margin-bottom: 6px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    .linha { border-bottom: 1px solid #333; display: inline-block; min-width: 200px; margin-left: 8px; }
+    .assinaturas { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 60px; }
+    .assinatura { border-top: 1px solid #333; padding-top: 8px; text-align: center; font-size: 12px; }
+    @media print { body { padding: 20px; } }
+  </style></head><body>
+  <h1>Termo de Cessão Emergencial de Medicamentos e/ou Insumos</h1>
+  <div class="sub">Rede de Redistribuição Emergencial · SUS/MG · Região de Saúde Sul de MG</div>
+  
+  <div class="secao">
+    <div class="secao-titulo">Município Cedente</div>
+    <p><strong>Município:</strong> ${ced ? ced.nome : '___________________'}<br>
+    <strong>Secretário(a) de Saúde:</strong> ${ced ? ced.secretario : '___________________'}<br>
+    <strong>Farmacêutico(a) Responsável:</strong> ${ced ? (ced.farmaceutico || '___________________') : '___________________'}<br>
+    <strong>E-mail:</strong> ${ced ? ced.email : '___________________'} · <strong>Tel:</strong> ${ced ? (ced.telefone || '___________________') : '___________________'}</p>
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">Município Receptor</div>
+    <p><strong>Município:</strong> ${sol ? sol.nome : '___________________'}<br>
+    <strong>Secretário(a) de Saúde:</strong> ${sol ? sol.secretario : '___________________'}<br>
+    <strong>Farmacêutico(a) Responsável:</strong> ${sol ? (sol.farmaceutico || '___________________') : '___________________'}<br>
+    <strong>E-mail:</strong> ${sol ? sol.email : '___________________'} · <strong>Tel:</strong> ${sol ? (sol.telefone || '___________________') : '___________________'}</p>
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">1. Do Objeto</div>
+    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">2. Da Justificativa</div>
+    <p>${s.justificativa || '___________________'}</p>
+    ${s.processo ? '<p><strong>Processo licitatório em andamento:</strong> ' + s.processo + '</p>' : ''}
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">3. Das Condições Sanitárias</div>
+    <p>O Município Cedente atesta que os itens estão dentro do prazo de validade, em embalagem original e íntegra, armazenados em condições adequadas. O Município Receptor assume a responsabilidade sanitária a partir do recebimento. A VISA Municipal de ambos os municípios será informada em até 48 horas.</p>
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">4. Da Contraprestação</div>
+    <p>Modalidade acordada: <strong>${mods[s.modalidade] || s.modalidade}</strong><br>
+    Prazo: <span class="linha"></span></p>
+  </div>
+
+  <div class="secao">
+    <div class="secao-titulo">5. Da Vigência</div>
+    <p>O presente Termo entra em vigor na data de sua assinatura e encerra-se com o cumprimento da contraprestação ou no prazo máximo de <span class="linha"></span> dias.</p>
+  </div>
+
+  <p style="margin-top:30px">Data: ${data}</p>
+
+  <div class="assinaturas">
+    <div class="assinatura">Secretário(a) de Saúde<br>${ced ? ced.nome : '___________________'}<br><small>Município Cedente</small></div>
+    <div class="assinatura">Secretário(a) de Saúde<br>${sol ? sol.nome : '___________________'}<br><small>Município Receptor</small></div>
+    <div class="assinatura" style="margin-top:40px">Farmacêutico(a) Responsável<br>${ced ? (ced.farmaceutico || '___________________') : '___________________'}<br><small>Município Cedente</small></div>
+    <div class="assinatura" style="margin-top:40px">Farmacêutico(a) Responsável<br>${sol ? (sol.farmaceutico || '___________________') : '___________________'}<br><small>Município Receptor</small></div>
+  </div>
+  <div style="background:linear-gradient(135deg,#003F6B,#005B99);color:rgba(255,255,255,0.6);text-align:center;padding:14px;font-size:11px;font-family:Inter,sans-serif;letter-spacing:0.3px">
+  Desenvolvido por <strong style="color:rgba(255,255,255,0.7)">Diego Rodrigues Duarte</strong> · Coordenador de Compras · SEMSA Itajubá-MG · 2026
+</div>
+
+<div class="modal-overlay" id="modal-necessidade">
+  <div class="modal">
+    <div class="modal-titulo">🚨 Publicar Necessidade</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo necessário *</label><input type="text" class="form-input" id="nec-medicamento" placeholder="Ex: Amoxicilina 500mg"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade necessária *</label><input type="number" class="form-input" id="nec-quantidade" min="1"></div>
+      <div class="form-grupo"><label class="form-label">Urgência</label>
+        <select class="form-select" id="nec-urgencia">
+          <option value="alta">🔴 Alta — preciso em 24-48h</option>
+          <option value="media">🟡 Média — preciso em até 7 dias</option>
+          <option value="baixa">🟢 Baixa — planejamento</option>
+        </select>
+      </div>
+      <div class="form-grupo full"><label class="form-label">Justificativa</label><textarea class="form-textarea" id="nec-justificativa" placeholder="Descreva a situação..."></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
+      <button class="btn btn-acento" onclick="salvarNecessidade()">Publicar</button>
+    </div>
+  </div>
+</div>
+
+</body></html>`;
+  
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+
+// ===================== NECESSIDADES =====================
+function abrirModalNecessidade() {
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('nec-municipio').innerHTML = opts;
+  ['nec-medicamento','nec-quantidade','nec-justificativa'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('nec-urgencia').value = 'alta';
+  document.getElementById('modal-necessidade').classList.add('aberto');
+}
+
+function atualizarBadgeNecessidades() {
+  const abertas = (window.necessidades||[]).filter(n => n.status === 'aberta').length;
+  const btn = document.querySelector('[onclick*="necessidades"]');
+  if (btn) btn.textContent = `🚨 Necessidades${abertas > 0 ? ' (' + abertas + ')' : ''}`;
+}
+
+function renderNecessidades() {
+  const div = document.getElementById('lista-necessidades');
+  if (!div) return;
+  const lista = (window.necessidades||[]);
+  if (lista.length === 0) {
+    div.innerHTML = '<div class="vazio"><div class="vazio-icon">✅</div><div class="vazio-titulo">Nenhuma necessidade publicada</div><div class="vazio-desc">Todos os municípios estão abastecidos.</div></div>';
+    return;
+  }
+  const urgIcons = { alta: '🔴', media: '🟡', baixa: '🟢' };
+  const urgLabels = { alta: 'Alta — 24-48h', media: 'Média — 7 dias', baixa: 'Baixa' };
+  div.innerHTML = lista.map(n => {
+    const mun = (window.municipios||[]).find(m => m.id === n.municipioId);
+    return `<div class="sol-card" style="border-left:4px solid ${n.urgencia === 'alta' ? '#D63B2F' : n.urgencia === 'media' ? '#c8863a' : '#00A86B'}">
+      <div class="sol-card-header">
+        <div>
+          <div class="sol-card-titulo">${urgIcons[n.urgencia]||''} ${n.medicamento} — ${n.quantidade} unidades</div>
+          <div class="sol-card-meta">${mun ? mun.nome : '—'} · ${formatarDataHora(n.data)}</div>
+        </div>
+        <span class="badge ${n.status === 'atendida' ? 'badge-ok' : 'badge-alerta'}">${n.status === 'atendida' ? 'Atendida' : urgLabels[n.urgencia]||n.urgencia}</span>
+      </div>
+      ${n.justificativa ? `<div class="sol-card-body">${n.justificativa}</div>` : ''}
+      <div class="sol-card-footer">
+        ${n.status === 'aberta' ? `<button class="btn btn-primario btn-sm" onclick="encerrarNecessidade('${n.id}')">✓ Marcar como atendida</button>` : ''}
+        <button class="btn btn-perigo btn-sm" onclick="excluirNecessidade('${n.id}')">🗑 Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ===================== GRÁFICOS =====================
+let chartMunicipios = null, chartStatus = null, chartModalidade = null;
+
+function renderGraficos() {
+  const sols = window.solicitacoes || [];
+  const muns = window.municipios || [];
+
+  // Gráfico por município
+  const labels = muns.map(m => m.nome);
+  const entradas = muns.map(m => sols.filter(s => s.cedenteId === m.id && s.status === 'concluida').length);
+  const saidas = muns.map(m => sols.filter(s => s.solicitanteId === m.id && s.status === 'concluida').length);
+  const pendentes = muns.map(m => sols.filter(s => (s.cedenteId === m.id || s.solicitanteId === m.id) && s.status === 'pendente').length);
+
+  const ctx1 = document.getElementById('grafico-municipios');
+  if (ctx1) {
+    if (chartMunicipios) chartMunicipios.destroy();
+    chartMunicipios = new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Cedeu (saídas)', data: entradas, backgroundColor: '#2d6b52' },
+          { label: 'Recebeu (entradas)', data: saidas, backgroundColor: '#4a9470' },
+          { label: 'Pendências', data: pendentes, backgroundColor: '#c8863a' }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: false }, y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+    });
+  }
+
+  // Gráfico por status
+  const statusLabels = ['Pendente', 'Aprovada', 'Concluída', 'Recusada'];
+  const statusData = [
+    sols.filter(s => s.status === 'pendente').length,
+    sols.filter(s => s.status === 'aprovada').length,
+    sols.filter(s => s.status === 'concluida').length,
+    sols.filter(s => s.status === 'recusada').length
+  ];
+  const ctx2 = document.getElementById('grafico-status');
+  if (ctx2) {
+    if (chartStatus) chartStatus.destroy();
+    chartStatus = new Chart(ctx2, {
+      type: 'doughnut',
+      data: { labels: statusLabels, datasets: [{ data: statusData, backgroundColor: ['#2563eb','#c8863a','#2d6b52','#c0392b'] }] },
+      options: { responsive: true, plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Por Status' } } }
+    });
+  }
+
+  // Gráfico por modalidade
+  const modLabels = ['Empréstimo', 'Permuta', 'Doação'];
+  const modData = [
+    sols.filter(s => s.modalidade === 'emprestimo').length,
+    sols.filter(s => s.modalidade === 'permuta').length,
+    sols.filter(s => s.modalidade === 'doacao').length
+  ];
+  const ctx3 = document.getElementById('grafico-modalidade');
+  if (ctx3) {
+    if (chartModalidade) chartModalidade.destroy();
+    chartModalidade = new Chart(ctx3, {
+      type: 'doughnut',
+      data: { labels: modLabels, datasets: [{ data: modData, backgroundColor: ['#1a4a3a','#4a9470','#c8863a'] }] },
+      options: { responsive: true, plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Por Modalidade' } } }
+    });
+  }
+}
+
+// ===================== UTILS =====================
+function fecharModal(id) { document.getElementById(id).classList.remove('aberto'); }
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('aberto'); }));
+
+function atualizarSelectsMunicipios() {
+  const opts = '<option value="">Todos os municípios</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  const f = document.getElementById('filtro-municipio-estoque');
+  if (f) f.innerHTML = opts;
+}
+
+function formatarData(str) {
+  if (!str) return '—';
+  const [y,m,d] = str.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function formatarDataHora(str) {
+  if (!str) return '—';
+  const d = new Date(str);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+}
+
+// Aguarda um tick para os listeners iniciarem
+setTimeout(() => renderDashboard(), 800);
+</script>
+
+<div class="modal-overlay" id="modal-necessidade">
+  <div class="modal">
+    <div class="modal-titulo">🚨 Publicar Necessidade</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo necessário *</label><input type="text" class="form-input" id="nec-medicamento" placeholder="Ex: Amoxicilina 500mg"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade necessária *</label><input type="number" class="form-input" id="nec-quantidade" min="1"></div>
+      <div class="form-grupo"><label class="form-label">Urgência</label>
+        <select class="form-select" id="nec-urgencia">
+          <option value="alta">🔴 Alta — preciso em 24-48h</option>
+          <option value="media">🟡 Média — preciso em até 7 dias</option>
+          <option value="baixa">🟢 Baixa — planejamento</option>
+        </select>
+      </div>
+      <div class="form-grupo full"><label class="form-label">Justificativa</label><textarea class="form-textarea" id="nec-justificativa" placeholder="Descreva a situação..."></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
+      <button class="btn btn-acento" onclick="salvarNecessidade()">Publicar</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
