@@ -566,6 +566,7 @@
 <script>
 // ===================== ESTADO E NAVEGAÇÃO =====================
 let painelAtual = 'dashboard';
+window.painelAtual = painelAtual;
 let filtroEstoqueTexto = '';
 let filtroEstoqueMun = '';
 
@@ -580,6 +581,7 @@ function mostrarPainel(id, btn) {
   document.getElementById('painel-' + id).classList.add('ativo');
   btn.classList.add('ativo');
   painelAtual = id;
+  window.painelAtual = id;
   renderizarPainel(id);
 }
 
