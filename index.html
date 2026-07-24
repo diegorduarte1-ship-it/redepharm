@@ -1014,6 +1014,7 @@ function gerarTermoPDF(id) {
   const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
   const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
   const nec = s.necessidadeId ? (window.necessidades||[]).find(n => n.id === s.necessidadeId) : null;
+  const itemEstoque = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento === s.medicamento);
   const mods = { emprestimo: 'Empréstimo (devolução do mesmo item)', permuta: 'Permuta (troca por item equivalente)', doacao: 'Doação' };
   const urgLabels = { normal: 'Normal', urgente: 'Urgente', critica: 'Crítica' };
   const data = new Date().toLocaleDateString('pt-BR');
@@ -1052,7 +1053,8 @@ function gerarTermoPDF(id) {
 
   <div class="secao">
     <div class="secao-titulo">1. Do Objeto</div>
-    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>
+    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.<br>
+    <strong>Lote:</strong> ${itemEstoque ? (itemEstoque.lote || '___________________') : '___________________'} &nbsp;·&nbsp; <strong>Validade:</strong> ${itemEstoque ? formatarData(itemEstoque.validade) : '___________________'}</p>
   </div>
 
   <div class="secao">
