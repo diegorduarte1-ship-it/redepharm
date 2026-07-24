@@ -8,7 +8,7 @@
 <!-- Firebase SDK -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   // =====================================================
   // CONFIGURAÇÃO DO FIREBASE
@@ -35,8 +35,34 @@
   window.municipios = [];
   window.estoques = [];
   window.solicitacoes = [];
+  window.necessidades = [];
   window.db = db;
-  window.fsLib = { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy };
+  window.fsLib = { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, onSnapshot, query, orderBy };
+
+  // =====================================================
+  // CONFIGURAÇÃO DE NOTIFICAÇÕES (Webhook / E-mail)
+  // Documento único: config/notificacoes
+  // =====================================================
+  window.configNotif = {};
+  onSnapshot(doc(db, "config", "notificacoes"), snap => {
+    window.configNotif = snap.exists() ? snap.data() : {};
+  });
+
+  window.salvarConfigNotificacoes = async function() {
+    const dados = {
+      webhookUrl: document.getElementById('cfg-webhook').value.trim(),
+      webhookUrgencias: [...document.querySelectorAll('.cfg-webhook-urg:checked')].map(c => c.value),
+      emailjsServiceId: document.getElementById('cfg-ej-service').value.trim(),
+      emailjsTemplateId: document.getElementById('cfg-ej-template').value.trim(),
+      emailjsPublicKey: document.getElementById('cfg-ej-public').value.trim(),
+      emailDestino: document.getElementById('cfg-email-destino').value.trim()
+    };
+    try {
+      await setDoc(doc(db, "config", "notificacoes"), dados, { merge: true });
+      alert('Configurações de notificação salvas.');
+      fecharModal('modal-config');
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
 
   // =====================================================
   // LISTENERS EM TEMPO REAL
@@ -54,6 +80,11 @@
 
   onSnapshot(query(collection(db, "solicitacoes"), orderBy("data", "desc")), snap => {
     window.solicitacoes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderizarPainelAtual();
+  });
+
+  onSnapshot(query(collection(db, "necessidades"), orderBy("criadoEm", "desc")), snap => {
+    window.necessidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderizarPainelAtual();
   });
 
@@ -167,8 +198,9 @@
     if (solicitanteId === cedenteId) { alert('Solicitante e cedente não podem ser o mesmo município.'); return; }
     const maxDisponivel = document.getElementById('sol-quantidade').getAttribute('max');
     if (maxDisponivel && parseInt(quantidade) > parseInt(maxDisponivel)) { alert('Quantidade solicitada maior que a disponível em estoque (' + maxDisponivel + ').'); return; }
+    const necessidadeId = document.getElementById('sol-necessidade-id').value;
     try {
-      await addDoc(collection(db, "solicitacoes"), {
+      const novaSolRef = await addDoc(collection(db, "solicitacoes"), {
         solicitanteId,
         cedenteId,
         medicamento,
@@ -177,8 +209,12 @@
         justificativa,
         processo: document.getElementById('sol-processo').value.trim(),
         status: 'pendente',
+        necessidadeId: necessidadeId || null,
         data: new Date().toISOString()
       });
+      if (necessidadeId) {
+        await updateDoc(doc(db, "necessidades", necessidadeId), { status: 'atendida', solicitacaoId: novaSolRef.id });
+      }
       fecharModal('modal-solicitacao');
     } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
   };
@@ -200,8 +236,107 @@
         }
       }
 
+      // Se a solicitação recusada tiver origem em uma necessidade do mural, reabre a necessidade
+      if (novoStatus === 'recusada' && s && s.necessidadeId) {
+        await updateDoc(doc(db, "necessidades", s.necessidadeId), { status: 'aberta', solicitacaoId: null });
+      }
+
       await updateDoc(doc(db, "solicitacoes", id), dadosUpdate);
     } catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  // =====================================================
+  // NECESSIDADES (MURAL)
+  // =====================================================
+  window.salvarNecessidade = async function() {
+    const municipioId = document.getElementById('nec-municipio').value;
+    const medicamento = document.getElementById('nec-medicamento').value.trim();
+    const quantidade = document.getElementById('nec-quantidade').value;
+    const justificativa = document.getElementById('nec-justificativa').value.trim();
+    if (!municipioId || !medicamento || !quantidade || !justificativa) { alert('Preencha todos os campos obrigatórios.'); return; }
+    try {
+      const urgencia = document.getElementById('nec-urgencia').value;
+      const dadosNec = {
+        municipioId,
+        medicamento,
+        quantidade: parseInt(quantidade),
+        unidade: document.getElementById('nec-unidade').value,
+        urgencia,
+        prazo: document.getElementById('nec-prazo').value,
+        justificativa,
+        status: 'aberta',
+        criadoEm: new Date().toISOString()
+      };
+      await addDoc(collection(db, "necessidades"), dadosNec);
+      fecharModal('modal-necessidade');
+      if (urgencia === 'urgente' || urgencia === 'critica') {
+        const mun = (window.municipios||[]).find(m => m.id === municipioId);
+        window.dispararAlertaNecessidade({ ...dadosNec, municipioNome: mun ? mun.nome : '—' });
+      }
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+  window.atualizarStatusNecessidade = async function(id, novoStatus) {
+    try { await updateDoc(doc(db, "necessidades", id), { status: novoStatus }); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.excluirNecessidade = async function(id) {
+    if (!confirm('Remover esta necessidade do mural?')) return;
+    try { await deleteDoc(doc(db, "necessidades", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  // Dispara alerta externo (webhook e/ou e-mail via EmailJS) para necessidades urgentes/críticas
+  window.dispararAlertaNecessidade = async function(nec) {
+    const cfg = window.configNotif || {};
+    const urgLabel = nec.urgencia === 'critica' ? 'CRÍTICA' : 'URGENTE';
+    const mensagem = `🚨 Necessidade ${urgLabel} publicada por ${nec.municipioNome}: ${nec.quantidade} ${nec.unidade||''} de ${nec.medicamento}. Justificativa: ${nec.justificativa}`;
+
+    // --- Webhook (Slack, Discord, Zapier, Make, n8n, etc.) ---
+    if (cfg.webhookUrl && (!cfg.webhookUrgencias || cfg.webhookUrgencias.length === 0 || cfg.webhookUrgencias.includes(nec.urgencia))) {
+      try {
+        await fetch(cfg.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: mensagem,      // formato aceito pelo Slack
+            content: mensagem,   // formato aceito pelo Discord
+            municipio: nec.municipioNome,
+            medicamento: nec.medicamento,
+            quantidade: nec.quantidade,
+            unidade: nec.unidade,
+            urgencia: nec.urgencia,
+            justificativa: nec.justificativa
+          })
+        });
+      } catch(e) { console.warn('Falha ao enviar webhook de necessidade:', e); }
+    }
+
+    // --- E-mail via EmailJS (carregado sob demanda) ---
+    if (cfg.emailjsServiceId && cfg.emailjsTemplateId && cfg.emailjsPublicKey && cfg.emailDestino) {
+      try {
+        if (!window.emailjs) {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+          window.emailjs.init({ publicKey: cfg.emailjsPublicKey });
+        }
+        await window.emailjs.send(cfg.emailjsServiceId, cfg.emailjsTemplateId, {
+          to_email: cfg.emailDestino,
+          municipio: nec.municipioNome,
+          medicamento: nec.medicamento,
+          quantidade: `${nec.quantidade} ${nec.unidade||''}`,
+          urgencia: urgLabel,
+          justificativa: nec.justificativa,
+          mensagem
+        });
+      } catch(e) { console.warn('Falha ao enviar e-mail de necessidade:', e); }
+    }
   };
 </script>
 
@@ -329,6 +464,7 @@
   <div style="display:flex;gap:8px;align-items:center">
     <span class="badge-cloud">☁ Firebase</span>
     <span class="badge-admin">Administrador</span>
+    <button class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:white" onclick="abrirModalConfig()" title="Configurar alertas de necessidade">⚙ Alertas</button>
   </div>
 </div>
 
@@ -427,6 +563,24 @@
     <div id="lista-solicitacoes"></div>
   </div>
 
+  <!-- NECESSIDADES -->
+  <div id="painel-necessidades" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">🚨 Mural de Necessidades</div>
+      <button class="btn btn-primario" onclick="abrirModalNecessidade()">+ Publicar Necessidade</button>
+    </div>
+    <div class="alerta alerta-info">Publique aqui o que seu município está precisando. Os demais municípios visualizam e podem abrir uma solicitação de transferência diretamente a partir do item publicado.</div>
+    <div class="busca-wrap">
+      <select class="form-select" style="width:200px" onchange="filtrarNecessidades(this.value)">
+        <option value="aberta" selected>Em aberto</option>
+        <option value="atendida">Atendidas</option>
+        <option value="cancelada">Canceladas</option>
+        <option value="">Todas</option>
+      </select>
+    </div>
+    <div id="mural-necessidades"></div>
+  </div>
+
 </div>
 
 <!-- MODAIS -->
@@ -481,10 +635,62 @@
       <div class="form-grupo"><label class="form-label">Modalidade *</label><select class="form-select" id="sol-modalidade"><option value="emprestimo">Empréstimo</option><option value="permuta">Permuta</option><option value="doacao">Doação</option></select></div>
       <div class="form-grupo full"><label class="form-label">Justificativa *</label><textarea class="form-textarea" id="sol-justificativa"></textarea></div>
       <div class="form-grupo full"><label class="form-label">Processo licitatório em andamento</label><input type="text" class="form-input" id="sol-processo" placeholder="Ex: Dispensa nº 015/2026"></div>
+      <input type="hidden" id="sol-necessidade-id" value="">
     </div>
     <div class="modal-footer">
       <button class="btn btn-secundario" onclick="fecharModal('modal-solicitacao')">Cancelar</button>
       <button class="btn btn-acento" onclick="salvarSolicitacao()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-necessidade">
+  <div class="modal">
+    <div class="modal-titulo">🚨 Publicar Necessidade</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo (denominação genérica) *</label><input type="text" class="form-input" id="nec-medicamento"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="nec-quantidade" min="0"></div>
+      <div class="form-grupo"><label class="form-label">Unidade</label><select class="form-select" id="nec-unidade"><option>comprimidos</option><option>cápsulas</option><option>frascos</option><option>ampolas</option><option>unidades</option><option>caixas</option><option>sachês</option></select></div>
+      <div class="form-grupo"><label class="form-label">Urgência</label><select class="form-select" id="nec-urgencia"><option value="normal">Normal</option><option value="urgente">Urgente</option><option value="critica">Crítica</option></select></div>
+      <div class="form-grupo"><label class="form-label">Prazo desejado</label><input type="date" class="form-input" id="nec-prazo"></div>
+      <div class="form-grupo full"><label class="form-label">Justificativa *</label><textarea class="form-textarea" id="nec-justificativa" placeholder="Ex: ruptura de estoque, aumento de demanda, atraso em processo licitatório..."></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
+      <button class="btn btn-primario" onclick="salvarNecessidade()">Publicar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-config">
+  <div class="modal">
+    <div class="modal-titulo">⚙ Alertas de Necessidade (Urgente/Crítica)</div>
+    <div class="alerta alerta-info">Configure abaixo para receber um aviso automático (webhook e/ou e-mail) sempre que alguém publicar uma necessidade <strong>Urgente</strong> ou <strong>Crítica</strong> no mural. Ambos os campos são opcionais — preencha só o que for usar. As configurações ficam salvas na nuvem e valem para todos os municípios.</div>
+
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Webhook (Slack, Discord, Zapier, Make, n8n...)</label>
+        <input type="text" class="form-input" id="cfg-webhook" placeholder="https://hooks.slack.com/services/...">
+        <small style="color:var(--cinza);font-size:12px">No Slack: Config. do app → Incoming Webhooks. No Discord: Configurações do canal → Integrações → Webhooks.</small>
+      </div>
+      <div class="form-grupo full">
+        <label class="form-label">Disparar webhook para qual urgência?</label>
+        <label style="font-size:13px;display:inline-flex;gap:6px;align-items:center;margin-right:16px"><input type="checkbox" class="cfg-webhook-urg" value="urgente" checked> Urgente</label>
+        <label style="font-size:13px;display:inline-flex;gap:6px;align-items:center"><input type="checkbox" class="cfg-webhook-urg" value="critica" checked> Crítica</label>
+      </div>
+
+      <div class="form-grupo full" style="border-top:1px solid var(--borda);padding-top:14px">
+        <label class="form-label">E-mail via EmailJS (opcional — requer conta gratuita em emailjs.com)</label>
+        <small style="color:var(--cinza);font-size:12px">Crie uma conta em emailjs.com, conecte seu e-mail, crie um template e cole os 3 códigos abaixo.</small>
+      </div>
+      <div class="form-grupo"><label class="form-label">Service ID</label><input type="text" class="form-input" id="cfg-ej-service" placeholder="service_xxxx"></div>
+      <div class="form-grupo"><label class="form-label">Template ID</label><input type="text" class="form-input" id="cfg-ej-template" placeholder="template_xxxx"></div>
+      <div class="form-grupo"><label class="form-label">Public Key</label><input type="text" class="form-input" id="cfg-ej-public" placeholder="ex: AbCdEfGhIjKlMn"></div>
+      <div class="form-grupo"><label class="form-label">E-mail(s) de destino</label><input type="text" class="form-input" id="cfg-email-destino" placeholder="farmacia@saude.mg.gov.br"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-config')">Cancelar</button>
+      <button class="btn btn-primario" onclick="salvarConfigNotificacoes()">Salvar</button>
     </div>
   </div>
 </div>
@@ -513,6 +719,7 @@ function renderizarPainel(id) {
   if (id === 'municipios') renderMunicipios();
   if (id === 'estoque') renderEstoque();
   if (id === 'solicitacoes') renderSolicitacoes();
+  if (id === 'necessidades') renderNecessidades();
 }
 
 // ===================== DASHBOARD =====================
@@ -521,12 +728,15 @@ function renderDashboard() {
   const em90 = new Date(hoje); em90.setDate(hoje.getDate() + 90);
   const vencendo = (window.estoques || []).filter(e => new Date(e.validade) <= em90 && new Date(e.validade) >= hoje);
   const pendentes = (window.solicitacoes || []).filter(s => s.status === 'pendente');
+  const necAbertas = (window.necessidades || []).filter(n => n.status === 'aberta');
+  const necUrgentes = necAbertas.filter(n => n.urgencia === 'urgente' || n.urgencia === 'critica');
 
   document.getElementById('cards-stats').innerHTML = `
     <div class="card-stat"><div class="card-stat-label">Municípios</div><div class="card-stat-valor">${(window.municipios||[]).length}</div><div class="card-stat-desc">na rede</div></div>
     <div class="card-stat"><div class="card-stat-label">Itens em Estoque</div><div class="card-stat-valor">${(window.estoques||[]).length}</div><div class="card-stat-desc">registros ativos</div></div>
     <div class="card-stat"><div class="card-stat-label">Solicitações</div><div class="card-stat-valor">${(window.solicitacoes||[]).length}</div><div class="card-stat-desc">${pendentes.length} pendente(s)</div></div>
     <div class="card-stat"><div class="card-stat-label">Validade Próxima</div><div class="card-stat-valor" style="color:${vencendo.length > 0 ? 'var(--acento)' : 'var(--verde)'}">${vencendo.length}</div><div class="card-stat-desc">vencendo em 90 dias</div></div>
+    <div class="card-stat"><div class="card-stat-label">Necessidades Abertas</div><div class="card-stat-valor" style="color:${necUrgentes.length > 0 ? 'var(--vermelho)' : 'var(--verde)'}">${necAbertas.length}</div><div class="card-stat-desc">${necUrgentes.length} urgente(s)/crítica(s)</div></div>
   `;
 
   const recentes = [...(window.solicitacoes||[])].slice(0,3);
@@ -654,6 +864,62 @@ function solCard(s, compacto) {
   </div>`;
 }
 
+// ===================== NECESSIDADES (MURAL) =====================
+let filtroNecStatus = 'aberta';
+function renderNecessidades() {
+  let lista = (window.necessidades||[]);
+  if (filtroNecStatus) lista = lista.filter(n => n.status === filtroNecStatus);
+  const div = document.getElementById('mural-necessidades');
+  if (!div) return;
+  div.innerHTML = lista.length === 0
+    ? `<div class="vazio"><div class="vazio-icon">🚨</div><div class="vazio-titulo">Nenhuma necessidade encontrada</div></div>`
+    : `<div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start">${lista.map(necessidadeCard).join('')}</div>`;
+}
+
+function filtrarNecessidades(v) { filtroNecStatus = v; renderNecessidades(); }
+
+function necessidadeCard(n) {
+  const mun = (window.municipios||[]).find(m => m.id === n.municipioId);
+  const urgBadges = { normal: 'badge-pendente', urgente: 'badge-alerta', critica: 'badge-critico' };
+  const urgLabels = { normal: 'Normal', urgente: 'Urgente', critica: 'Crítica' };
+  const statusBadges = { aberta: 'badge-pendente', atendida: 'badge-ok', cancelada: 'badge-recusado' };
+  const statusLabels = { aberta: 'Em aberto', atendida: 'Atendida', cancelada: 'Cancelada' };
+  const acoes = n.status === 'aberta'
+    ? `<button class="btn btn-acento btn-sm" onclick="abrirSolicitacaoDeNecessidade('${n.id}')">📋 Abrir Solicitação</button>
+       <button class="btn btn-perigo btn-sm" onclick="atualizarStatusNecessidade('${n.id}', 'cancelada')">✕ Cancelar</button>`
+    : `<button class="btn btn-secundario btn-sm" onclick="atualizarStatusNecessidade('${n.id}', 'aberta')">↺ Reabrir</button>
+       <button class="btn btn-perigo btn-sm" onclick="excluirNecessidade('${n.id}')">✕ Remover</button>`;
+  return `<div class="sol-card">
+    <div class="sol-card-header">
+      <div><div class="sol-card-titulo">${n.medicamento} — ${n.quantidade} ${n.unidade||''}</div><div class="sol-card-meta">${mun ? mun.nome : '—'} · ${formatarDataHora(n.criadoEm)}</div></div>
+      <span class="badge ${urgBadges[n.urgencia]||''}">${urgLabels[n.urgencia]||n.urgencia}</span>
+    </div>
+    <div class="sol-card-body">${n.justificativa || ''}${n.prazo ? '<br><strong>Prazo desejado:</strong> ' + formatarData(n.prazo) : ''}</div>
+    <div style="margin-bottom:8px"><span class="badge ${statusBadges[n.status]||''}">${statusLabels[n.status]||n.status}</span></div>
+    <div class="sol-card-footer">${acoes}</div>
+  </div>`;
+}
+
+function abrirModalNecessidade() {
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('nec-municipio').innerHTML = opts;
+  ['nec-medicamento','nec-quantidade','nec-prazo','nec-justificativa'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('nec-urgencia').value = 'normal';
+  document.getElementById('modal-necessidade').classList.add('aberto');
+}
+
+function abrirModalConfig() {
+  const cfg = window.configNotif || {};
+  document.getElementById('cfg-webhook').value = cfg.webhookUrl || '';
+  document.getElementById('cfg-ej-service').value = cfg.emailjsServiceId || '';
+  document.getElementById('cfg-ej-template').value = cfg.emailjsTemplateId || '';
+  document.getElementById('cfg-ej-public').value = cfg.emailjsPublicKey || '';
+  document.getElementById('cfg-email-destino').value = cfg.emailDestino || '';
+  const urgs = cfg.webhookUrgencias && cfg.webhookUrgencias.length ? cfg.webhookUrgencias : ['urgente','critica'];
+  document.querySelectorAll('.cfg-webhook-urg').forEach(c => c.checked = urgs.includes(c.value));
+  document.getElementById('modal-config').classList.add('aberto');
+}
+
 function abrirModalSolicitacao() {
   const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
   document.getElementById('sol-solicitante').innerHTML = opts;
@@ -661,8 +927,28 @@ function abrirModalSolicitacao() {
   document.getElementById('sol-medicamento').innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
   document.getElementById('sol-qtd-disponivel').textContent = '';
   ['sol-quantidade','sol-justificativa','sol-processo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('sol-necessidade-id').value = '';
+  window.necessidadeAutoFill = null;
   document.getElementById('modal-solicitacao').classList.add('aberto');
 }
+
+// Abre a modal de solicitação já pré-preenchida a partir de um item do mural de necessidades
+window.abrirSolicitacaoDeNecessidade = function(necId) {
+  const nec = (window.necessidades||[]).find(n => n.id === necId);
+  if (!nec) return;
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('sol-solicitante').innerHTML = opts;
+  document.getElementById('sol-cedente').innerHTML = opts;
+  document.getElementById('sol-solicitante').value = nec.municipioId;
+  document.getElementById('sol-medicamento').innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+  document.getElementById('sol-qtd-disponivel').textContent = '';
+  document.getElementById('sol-quantidade').value = '';
+  document.getElementById('sol-processo').value = '';
+  document.getElementById('sol-justificativa').value = nec.justificativa || '';
+  document.getElementById('sol-necessidade-id').value = nec.id;
+  window.necessidadeAutoFill = { medicamento: (nec.medicamento||'').toLowerCase(), quantidade: nec.quantidade };
+  document.getElementById('modal-solicitacao').classList.add('aberto');
+};
 
 function atualizarMedicamentosDisponiveis() {
   const cedenteId = document.getElementById('sol-cedente').value;
@@ -673,6 +959,7 @@ function atualizarMedicamentosDisponiveis() {
 
   if (!cedenteId) {
     select.innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+    window.necessidadeAutoFill = null;
     return;
   }
 
@@ -685,12 +972,26 @@ function atualizarMedicamentosDisponiveis() {
 
   if (disponiveis.length === 0) {
     select.innerHTML = '<option value="">Nenhum item disponível para este município</option>';
+    window.necessidadeAutoFill = null;
     return;
   }
 
   select.innerHTML = '<option value="">Selecione...</option>' + disponiveis.map(e =>
     `<option value="${e.medicamento}" data-qtd="${e.quantidade}" data-unidade="${e.unidade||''}">${e.medicamento} (${e.quantidade} ${e.unidade||'un.'} disponíveis · val. ${formatarData(e.validade)})</option>`
   ).join('');
+
+  // Se veio de um item do mural de necessidades, tenta pré-selecionar o medicamento correspondente
+  if (window.necessidadeAutoFill) {
+    const alvo = window.necessidadeAutoFill.medicamento;
+    const opcao = Array.from(select.options).find(o => o.value.toLowerCase() === alvo);
+    if (opcao) {
+      select.value = opcao.value;
+      atualizarQtdDisponivel();
+      const maxDisp = parseInt(opcao.getAttribute('data-qtd')) || 0;
+      document.getElementById('sol-quantidade').value = Math.min(window.necessidadeAutoFill.quantidade, maxDisp);
+    }
+    window.necessidadeAutoFill = null;
+  }
 }
 
 function atualizarQtdDisponivel() {
@@ -712,7 +1013,9 @@ function gerarTermoPDF(id) {
   if (!s) return;
   const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
   const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
+  const nec = s.necessidadeId ? (window.necessidades||[]).find(n => n.id === s.necessidadeId) : null;
   const mods = { emprestimo: 'Empréstimo (devolução do mesmo item)', permuta: 'Permuta (troca por item equivalente)', doacao: 'Doação' };
+  const urgLabels = { normal: 'Normal', urgente: 'Urgente', critica: 'Crítica' };
   const data = new Date().toLocaleDateString('pt-BR');
   
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
@@ -757,6 +1060,13 @@ function gerarTermoPDF(id) {
     <p>${s.justificativa || '___________________'}</p>
     ${s.processo ? '<p><strong>Processo licitatório em andamento:</strong> ' + s.processo + '</p>' : ''}
   </div>
+
+  ${nec ? `<div class="secao">
+    <div class="secao-titulo">2.1 Necessidade de Origem (Mural)</div>
+    <p>Esta cessão atende à necessidade publicada no mural de necessidades em <strong>${formatarDataHora(nec.criadoEm)}</strong>, classificada como <strong>${urgLabels[nec.urgencia] || nec.urgencia}</strong>.</p>
+    <p><strong>Justificativa original do município solicitante:</strong> ${nec.justificativa || '___________________'}</p>
+    ${nec.prazo ? '<p><strong>Prazo desejado informado na publicação:</strong> ' + formatarData(nec.prazo) + '</p>' : ''}
+  </div>` : ''}
 
   <div class="secao">
     <div class="secao-titulo">3. Das Condições Sanitárias</div>
