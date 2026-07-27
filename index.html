@@ -873,6 +873,7 @@ function renderGraficos() {
   const sols = window.solicitacoes || [];
   const muns = window.municipios || [];
   const ctx1 = document.getElementById('grafico-municipios');
+  if (!ctx1) return;
   if (ctx1) {
     if (chartMunicipios) chartMunicipios.destroy();
     chartMunicipios = new Chart(ctx1, {
@@ -906,7 +907,7 @@ function renderGraficos() {
 }
 
 // ===================== UTILS =====================
-function fecharModal(id) { document.getElementById(id).classList.remove('aberto'); }
+function fecharModal(id) { const el = document.getElementById(id); if(el) el.classList.remove('aberto'); }
 document.querySelectorAll('.modal-overlay').forEach(m => { if(m) m.addEventListener('click', e => { if (e.target === m) m.classList.remove('aberto'); }); });
 
 function atualizarSelectsMunicipios() {
