@@ -133,7 +133,7 @@
         obs: document.getElementById('est-obs').value.trim(),
         criadoEm: new Date().toISOString()
       });
-      const _me = document.getElementById('modal-estoque'); if(_me) _me.classList.remove('aberto');
+      fecharModal('modal-estoque');
     } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
   };
 
@@ -179,8 +179,43 @@
         status: 'pendente',
         data: new Date().toISOString()
       });
-      const _ms = document.getElementById('modal-solicitacao'); if(_ms) _ms.classList.remove('aberto');
+      fecharModal('modal-solicitacao');
     } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+
+  window.necessidades = [];
+  onSnapshot(query(collection(db, "necessidades"), orderBy("data", "desc")), snap => {
+    window.necessidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (typeof renderNecessidades === 'function' && painelAtual === 'necessidades') renderNecessidades();
+  });
+
+  window.salvarNecessidade = async function() {
+    const municipioId = document.getElementById('nec-municipio').value;
+    const medicamento = document.getElementById('nec-medicamento').value.trim();
+    const quantidade = document.getElementById('nec-quantidade').value;
+    if (!municipioId || !medicamento || !quantidade) { alert('Preencha os campos obrigatórios.'); return; }
+    try {
+      await addDoc(collection(db, "necessidades"), {
+        municipioId, medicamento, quantidade: parseInt(quantidade),
+        urgencia: document.getElementById('nec-urgencia').value,
+        justificativa: document.getElementById('nec-justificativa').value.trim(),
+        status: 'aberta', data: new Date().toISOString()
+      });
+      fecharModal('modal-necessidade');
+    } catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.encerrarNecessidade = async function(id) {
+    if (!confirm('Marcar como atendida?')) return;
+    try { await updateDoc(doc(db, "necessidades", id), { status: 'atendida' }); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.excluirNecessidade = async function(id) {
+    if (!confirm('Excluir?')) return;
+    try { await deleteDoc(doc(db, "necessidades", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
   };
 
   window.atualizarStatus = async function(id, novoStatus) {
@@ -354,25 +389,7 @@
     <div class="cards-grid" id="cards-stats"></div>
     <div class="secao">
       <div class="secao-header"><div class="secao-titulo">Solicitações Recentes</div></div>
-      
-    <div class="secao">
-      <div class="secao-header"><div class="secao-titulo">📊 Situação por Município</div></div>
-      <div style="background:white;border:1px solid var(--borda);border-radius:10px;padding:20px">
-        <canvas id="grafico-municipios" height="120"></canvas>
-      </div>
-    </div>
-    <div class="secao">
-      <div class="secao-header"><div class="secao-titulo">📈 Transferências por Status</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div style="background:white;border:1px solid var(--borda);border-radius:10px;padding:20px">
-          <canvas id="grafico-status"></canvas>
-        </div>
-        <div style="background:white;border:1px solid var(--borda);border-radius:10px;padding:20px">
-          <canvas id="grafico-modalidade"></canvas>
-        </div>
-      </div>
-    </div>
-<div class="secao"><div class="secao-header"><div class="secao-titulo">Solicitações Recentes</div></div><div id="dashboard-solicitacoes"></div></div>
+      <div id="dashboard-solicitacoes"></div>
     </div>
     <div class="secao">
       <div class="secao-header"><div class="secao-titulo">Itens com Validade Próxima</div></div>
@@ -446,6 +463,19 @@
   </div>
 
 </div>
+
+
+  <!-- NECESSIDADES -->
+  <div id="painel-necessidades" class="painel">
+    <div class="secao-header">
+      <div class="secao-titulo">🚨 Mural de Necessidades</div>
+      <button class="btn btn-acento" onclick="abrirModalNecessidade()">+ Publicar Necessidade</button>
+    </div>
+    <div class="alerta alerta-aviso">
+      Municípios com necessidade urgente podem publicar aqui. Os demais visualizam e podem abrir uma solicitação diretamente.
+    </div>
+    <div id="lista-necessidades"></div>
+  </div>
 
 <!-- MODAIS -->
 <div class="modal-overlay" id="modal-municipio">
@@ -531,6 +561,7 @@ function renderizarPainel(id) {
   if (id === 'municipios') renderMunicipios();
   if (id === 'estoque') renderEstoque();
   if (id === 'solicitacoes') renderSolicitacoes();
+  if (id === 'necessidades') { if(typeof renderNecessidades==='function') renderNecessidades(); }
 }
 
 // ===================== DASHBOARD =====================
@@ -547,7 +578,6 @@ function renderDashboard() {
     <div class="card-stat"><div class="card-stat-label">Validade Próxima</div><div class="card-stat-valor" style="color:${vencendo.length > 0 ? 'var(--acento)' : 'var(--verde)'}">${vencendo.length}</div><div class="card-stat-desc">vencendo em 90 dias</div></div>
   `;
 
-  renderGraficos();
   const recentes = [...(window.solicitacoes||[])].slice(0,3);
   document.getElementById('dashboard-solicitacoes').innerHTML = recentes.length === 0
     ? `<div class="vazio"><div class="vazio-icon">📋</div><div class="vazio-titulo">Nenhuma solicitação ainda</div></div>`
@@ -658,10 +688,7 @@ function filtrarSolicitacoes(v) { filtroSolStatus = v; renderSolicitacoes(); }
 function solCard(s, compacto) {
   const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
   const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
-  const item = (window.estoques||[]).find(e => 
-    e.municipioId === s.cedenteId && 
-    e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase())
-  );
+  const item = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase()));
   const badges = { pendente: 'badge-pendente', aprovada: 'badge-ok', concluida: 'badge-concluido', recusada: 'badge-recusado' };
   const labels = { pendente: 'Pendente', aprovada: 'Aprovada', concluida: 'Concluída', recusada: 'Recusada' };
   const mods = { emprestimo: 'Empréstimo', permuta: 'Permuta', doacao: 'Doação' };
@@ -735,10 +762,7 @@ function gerarTermoPDF(id) {
   if (!s) return;
   const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
   const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
-  const item = (window.estoques||[]).find(e => 
-    e.municipioId === s.cedenteId && 
-    e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase())
-  );
+  const item = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase()));
   const mods = { emprestimo: 'Empréstimo (devolução do mesmo item)', permuta: 'Permuta (troca por item equivalente)', doacao: 'Doação' };
   const data = new Date().toLocaleDateString('pt-BR');
   
@@ -776,8 +800,7 @@ function gerarTermoPDF(id) {
 
   <div class="secao">
     <div class="secao-titulo">1. Do Objeto</div>
-    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>
-    ${item ? '<p><strong>Lote:</strong> ' + item.lote + ' &nbsp;·&nbsp; <strong>Validade:</strong> ' + formatarData(item.validade) + ' &nbsp;·&nbsp; <strong>Valor unitário:</strong> R$ ' + parseFloat(item.valor).toFixed(2) + '</p>' : ''}
+    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>${item ? '<p><strong>Lote:</strong> ' + item.lote + ' · <strong>Validade:</strong> ' + formatarData(item.validade) + ' · <strong>Valor unit.:</strong> R$ ' + parseFloat(item.valor).toFixed(2) + '</p>' : ''}
   </div>
 
   <div class="secao">
@@ -813,6 +836,29 @@ function gerarTermoPDF(id) {
   <div style="background:#0f2d20;color:rgba(255,255,255,0.45);text-align:center;padding:12px;font-size:11px;font-family:Inter,sans-serif">
   Desenvolvido por <strong style="color:rgba(255,255,255,0.7)">Diego Rodrigues Duarte</strong> · Coordenador de Compras · SEMSA Itajubá-MG · 2026
 </div>
+
+<div class="modal-overlay" id="modal-necessidade">
+  <div class="modal">
+    <div class="modal-titulo">🚨 Publicar Necessidade</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo *</label><input type="text" class="form-input" id="nec-medicamento" placeholder="Ex: Amoxicilina 500mg"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="nec-quantidade" min="1"></div>
+      <div class="form-grupo"><label class="form-label">Urgência</label>
+        <select class="form-select" id="nec-urgencia">
+          <option value="alta">🔴 Alta — 24-48h</option>
+          <option value="media">🟡 Média — 7 dias</option>
+          <option value="baixa">🟢 Baixa — planejamento</option>
+        </select>
+      </div>
+      <div class="form-grupo full"><label class="form-label">Justificativa</label><textarea class="form-textarea" id="nec-justificativa"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
+      <button class="btn btn-acento" onclick="salvarNecessidade()">Publicar</button>
+    </div>
+  </div>
+</div>
 </body></html>`;
   
   const win = window.open('', '_blank');
@@ -822,63 +868,45 @@ function gerarTermoPDF(id) {
 }
 
 
-// ===================== GRÁFICOS =====================
 let chartMunicipios = null, chartStatus = null, chartModalidade = null;
-
 function renderGraficos() {
   const sols = window.solicitacoes || [];
   const muns = window.municipios || [];
-  const labels = muns.map(m => m.nome);
-  const entradas = muns.map(m => sols.filter(s => s.cedenteId === m.id && s.status === 'concluida').length);
-  const saidas = muns.map(m => sols.filter(s => s.solicitanteId === m.id && s.status === 'concluida').length);
-  const pendentes = muns.map(m => sols.filter(s => (s.cedenteId === m.id || s.solicitanteId === m.id) && s.status === 'pendente').length);
-
   const ctx1 = document.getElementById('grafico-municipios');
   if (ctx1) {
     if (chartMunicipios) chartMunicipios.destroy();
     chartMunicipios = new Chart(ctx1, {
       type: 'bar',
-      data: { labels, datasets: [
-        { label: 'Cedeu', data: entradas, backgroundColor: '#005B99' },
-        { label: 'Recebeu', data: saidas, backgroundColor: '#00A86B' },
-        { label: 'Pendências', data: pendentes, backgroundColor: '#c8863a' }
+      data: { labels: muns.map(m=>m.nome), datasets: [
+        { label: 'Cedeu', data: muns.map(m=>sols.filter(s=>s.cedenteId===m.id&&s.status==='concluida').length), backgroundColor: '#005B99' },
+        { label: 'Recebeu', data: muns.map(m=>sols.filter(s=>s.solicitanteId===m.id&&s.status==='concluida').length), backgroundColor: '#00A86B' },
+        { label: 'Pendências', data: muns.map(m=>sols.filter(s=>(s.cedenteId===m.id||s.solicitanteId===m.id)&&s.status==='pendente').length), backgroundColor: '#c8863a' }
       ]},
       options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
     });
   }
-
   const ctx2 = document.getElementById('grafico-status');
   if (ctx2) {
     if (chartStatus) chartStatus.destroy();
     chartStatus = new Chart(ctx2, {
       type: 'doughnut',
-      data: { labels: ['Pendente','Aprovada','Concluída','Recusada'], datasets: [{ data: [
-        sols.filter(s=>s.status==='pendente').length,
-        sols.filter(s=>s.status==='aprovada').length,
-        sols.filter(s=>s.status==='concluida').length,
-        sols.filter(s=>s.status==='recusada').length
-      ], backgroundColor: ['#2563eb','#c8863a','#00A86B','#D63B2F'] }]},
+      data: { labels: ['Pendente','Aprovada','Concluída','Recusada'], datasets: [{ data: [sols.filter(s=>s.status==='pendente').length, sols.filter(s=>s.status==='aprovada').length, sols.filter(s=>s.status==='concluida').length, sols.filter(s=>s.status==='recusada').length], backgroundColor: ['#2563eb','#c8863a','#00A86B','#D63B2F'] }]},
       options: { responsive: true, plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Por Status' } } }
     });
   }
-
   const ctx3 = document.getElementById('grafico-modalidade');
   if (ctx3) {
     if (chartModalidade) chartModalidade.destroy();
     chartModalidade = new Chart(ctx3, {
       type: 'doughnut',
-      data: { labels: ['Empréstimo','Permuta','Doação'], datasets: [{ data: [
-        sols.filter(s=>s.modalidade==='emprestimo').length,
-        sols.filter(s=>s.modalidade==='permuta').length,
-        sols.filter(s=>s.modalidade==='doacao').length
-      ], backgroundColor: ['#005B99','#00A86B','#c8863a'] }]},
+      data: { labels: ['Empréstimo','Permuta','Doação'], datasets: [{ data: [sols.filter(s=>s.modalidade==='emprestimo').length, sols.filter(s=>s.modalidade==='permuta').length, sols.filter(s=>s.modalidade==='doacao').length], backgroundColor: ['#005B99','#00A86B','#c8863a'] }]},
       options: { responsive: true, plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Por Modalidade' } } }
     });
   }
 }
 
 // ===================== UTILS =====================
-function fecharModal(id) { const el = document.getElementById(id); if (el) el.classList.remove('aberto'); }
+function fecharModal(id) { document.getElementById(id).classList.remove('aberto'); }
 document.querySelectorAll('.modal-overlay').forEach(m => { if(m) m.addEventListener('click', e => { if (e.target === m) m.classList.remove('aberto'); }); });
 
 function atualizarSelectsMunicipios() {
@@ -901,5 +929,28 @@ function formatarDataHora(str) {
 
 renderDashboard();
 </script>
+
+<div class="modal-overlay" id="modal-necessidade">
+  <div class="modal">
+    <div class="modal-titulo">🚨 Publicar Necessidade</div>
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
+      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo *</label><input type="text" class="form-input" id="nec-medicamento" placeholder="Ex: Amoxicilina 500mg"></div>
+      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="nec-quantidade" min="1"></div>
+      <div class="form-grupo"><label class="form-label">Urgência</label>
+        <select class="form-select" id="nec-urgencia">
+          <option value="alta">🔴 Alta — 24-48h</option>
+          <option value="media">🟡 Média — 7 dias</option>
+          <option value="baixa">🟢 Baixa — planejamento</option>
+        </select>
+      </div>
+      <div class="form-grupo full"><label class="form-label">Justificativa</label><textarea class="form-textarea" id="nec-justificativa"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
+      <button class="btn btn-acento" onclick="salvarNecessidade()">Publicar</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
