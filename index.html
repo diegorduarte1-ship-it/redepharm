@@ -167,8 +167,10 @@
     if (solicitanteId === cedenteId) { alert('Solicitante e cedente não podem ser o mesmo município.'); return; }
     const maxDisponivel = document.getElementById('sol-quantidade').getAttribute('max');
     if (maxDisponivel && parseInt(quantidade) > parseInt(maxDisponivel)) { alert('Quantidade solicitada maior que a disponível em estoque (' + maxDisponivel + ').'); return; }
+    const necessidadeId = document.getElementById('sol-necessidade-id').value;
+    const optSelecionada = document.getElementById('sol-medicamento').options[document.getElementById('sol-medicamento').selectedIndex];
     try {
-      await addDoc(collection(db, "solicitacoes"), {
+      const novaSolRef = await addDoc(collection(db, "solicitacoes"), {
         solicitanteId,
         cedenteId,
         medicamento,
@@ -177,8 +179,15 @@
         justificativa,
         processo: document.getElementById('sol-processo').value.trim(),
         status: 'pendente',
+        necessidadeId: necessidadeId || null,
+        lote: optSelecionada ? (optSelecionada.getAttribute('data-lote') || '') : '',
+        validade: optSelecionada ? (optSelecionada.getAttribute('data-validade') || '') : '',
+        valor: optSelecionada ? (optSelecionada.getAttribute('data-valor') || '') : '',
         data: new Date().toISOString()
       });
+      if (necessidadeId) {
+        await updateDoc(doc(db, "necessidades", necessidadeId), { status: 'atendida', solicitacaoId: novaSolRef.id });
+      }
       fecharModal('modal-solicitacao');
     } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
   };
@@ -233,6 +242,10 @@
         } else {
           alert('Atenção: não foi encontrado o item correspondente no estoque do município cedente. O status foi atualizado, mas a quantidade não pôde ser deduzida automaticamente.');
         }
+      }
+
+      if (novoStatus === 'recusada' && s && s.necessidadeId) {
+        await updateDoc(doc(db, "necessidades", s.necessidadeId), { status: 'aberta', solicitacaoId: null });
       }
 
       await updateDoc(doc(db, "solicitacoes", id), dadosUpdate);
@@ -388,6 +401,14 @@
     </div>
     <div class="cards-grid" id="cards-stats"></div>
     <div class="secao">
+      <div class="secao-header"><div class="secao-titulo">Panorama da Rede</div></div>
+      <div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+        <div class="sol-card"><canvas id="grafico-municipios"></canvas></div>
+        <div class="sol-card"><canvas id="grafico-status"></canvas></div>
+        <div class="sol-card"><canvas id="grafico-modalidade"></canvas></div>
+      </div>
+    </div>
+    <div class="secao">
       <div class="secao-header"><div class="secao-titulo">Solicitações Recentes</div></div>
       <div id="dashboard-solicitacoes"></div>
     </div>
@@ -529,6 +550,7 @@
       <div class="form-grupo"><label class="form-label">Modalidade *</label><select class="form-select" id="sol-modalidade"><option value="emprestimo">Empréstimo</option><option value="permuta">Permuta</option><option value="doacao">Doação</option></select></div>
       <div class="form-grupo full"><label class="form-label">Justificativa *</label><textarea class="form-textarea" id="sol-justificativa"></textarea></div>
       <div class="form-grupo full"><label class="form-label">Processo licitatório em andamento</label><input type="text" class="form-input" id="sol-processo" placeholder="Ex: Dispensa nº 015/2026"></div>
+      <input type="hidden" id="sol-necessidade-id" value="">
     </div>
     <div class="modal-footer">
       <button class="btn btn-secundario" onclick="fecharModal('modal-solicitacao')">Cancelar</button>
@@ -590,6 +612,8 @@ function renderDashboard() {
         const dias = Math.ceil((new Date(e.validade) - hoje) / 86400000);
         return `<tr><td><strong>${e.medicamento}</strong></td><td>${mun ? mun.nome : '—'}</td><td>${e.quantidade} ${e.unidade}</td><td>${formatarData(e.validade)}</td><td><span class="badge badge-alerta">${dias}d</span></td></tr>`;
       }).join('')}</tbody></table></div>`;
+
+  if (typeof renderGraficos === 'function') renderGraficos();
 }
 
 // ===================== MUNICÍPIOS =====================
@@ -711,6 +735,8 @@ function abrirModalSolicitacao() {
   document.getElementById('sol-medicamento').innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
   document.getElementById('sol-qtd-disponivel').textContent = '';
   ['sol-quantidade','sol-justificativa','sol-processo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('sol-necessidade-id').value = '';
+  window.necessidadeAutoFill = null;
   document.getElementById('modal-solicitacao').classList.add('aberto');
 }
 
@@ -723,6 +749,7 @@ function atualizarMedicamentosDisponiveis() {
 
   if (!cedenteId) {
     select.innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+    window.necessidadeAutoFill = null;
     return;
   }
 
@@ -735,12 +762,26 @@ function atualizarMedicamentosDisponiveis() {
 
   if (disponiveis.length === 0) {
     select.innerHTML = '<option value="">Nenhum item disponível para este município</option>';
+    window.necessidadeAutoFill = null;
     return;
   }
 
   select.innerHTML = '<option value="">Selecione...</option>' + disponiveis.map(e =>
-    `<option value="${e.medicamento}" data-qtd="${e.quantidade}" data-unidade="${e.unidade||''}">${e.medicamento} (${e.quantidade} ${e.unidade||'un.'} disponíveis · val. ${formatarData(e.validade)})</option>`
+    `<option value="${e.medicamento}" data-qtd="${e.quantidade}" data-unidade="${e.unidade||''}" data-lote="${e.lote||''}" data-validade="${e.validade||''}" data-valor="${e.valor||''}">${e.medicamento} (${e.quantidade} ${e.unidade||'un.'} disponíveis · val. ${formatarData(e.validade)})</option>`
   ).join('');
+
+  // Se veio de um item do mural de necessidades, tenta pré-selecionar o medicamento correspondente
+  if (window.necessidadeAutoFill) {
+    const alvo = window.necessidadeAutoFill.medicamento;
+    const opcao = Array.from(select.options).find(o => o.value.toLowerCase() === alvo);
+    if (opcao) {
+      select.value = opcao.value;
+      atualizarQtdDisponivel();
+      const maxDisp = parseInt(opcao.getAttribute('data-qtd')) || 0;
+      document.getElementById('sol-quantidade').value = Math.min(window.necessidadeAutoFill.quantidade, maxDisp);
+    }
+    window.necessidadeAutoFill = null;
+  }
 }
 
 function atualizarQtdDisponivel() {
@@ -762,7 +803,11 @@ function gerarTermoPDF(id) {
   if (!s) return;
   const sol = (window.municipios||[]).find(m => m.id === s.solicitanteId);
   const ced = (window.municipios||[]).find(m => m.id === s.cedenteId);
-  const item = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase()));
+  const itemEstoque = (window.estoques||[]).find(e => e.municipioId === s.cedenteId && e.medicamento.toLowerCase().includes(s.medicamento.toLowerCase()));
+  const lote = s.lote || (itemEstoque ? itemEstoque.lote : '');
+  const validade = s.validade || (itemEstoque ? itemEstoque.validade : '');
+  const valor = s.valor || (itemEstoque ? itemEstoque.valor : '');
+  const item = (lote || validade || valor) ? { lote, validade, valor } : null;
   const mods = { emprestimo: 'Empréstimo (devolução do mesmo item)', permuta: 'Permuta (troca por item equivalente)', doacao: 'Doação' };
   const data = new Date().toLocaleDateString('pt-BR');
   
@@ -800,7 +845,7 @@ function gerarTermoPDF(id) {
 
   <div class="secao">
     <div class="secao-titulo">1. Do Objeto</div>
-    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>${item ? '<p><strong>Lote:</strong> ' + item.lote + ' · <strong>Validade:</strong> ' + formatarData(item.validade) + ' · <strong>Valor unit.:</strong> R$ ' + parseFloat(item.valor).toFixed(2) + '</p>' : ''}
+    <p>Cessão emergencial de <strong>${s.quantidade} unidades</strong> de <strong>${s.medicamento}</strong>, modalidade: <strong>${mods[s.modalidade] || s.modalidade}</strong>.</p>${item ? '<p><strong>Lote:</strong> ' + (item.lote || '___________________') + ' &nbsp;·&nbsp; <strong>Validade:</strong> ' + (item.validade ? formatarData(item.validade) : '___________________') + (item.valor ? ' &nbsp;·&nbsp; <strong>Valor unit.:</strong> R$ ' + parseFloat(item.valor).toFixed(2) : '') + '</p>' : ''}
   </div>
 
   <div class="secao">
@@ -835,29 +880,6 @@ function gerarTermoPDF(id) {
   </div>
   <div style="background:#0f2d20;color:rgba(255,255,255,0.45);text-align:center;padding:12px;font-size:11px;font-family:Inter,sans-serif">
   Desenvolvido por <strong style="color:rgba(255,255,255,0.7)">Diego Rodrigues Duarte</strong> · Coordenador de Compras · SEMSA Itajubá-MG · 2026
-</div>
-
-<div class="modal-overlay" id="modal-necessidade">
-  <div class="modal">
-    <div class="modal-titulo">🚨 Publicar Necessidade</div>
-    <div class="form-grid">
-      <div class="form-grupo full"><label class="form-label">Município *</label><select class="form-select" id="nec-municipio"></select></div>
-      <div class="form-grupo full"><label class="form-label">Medicamento / Insumo *</label><input type="text" class="form-input" id="nec-medicamento" placeholder="Ex: Amoxicilina 500mg"></div>
-      <div class="form-grupo"><label class="form-label">Quantidade *</label><input type="number" class="form-input" id="nec-quantidade" min="1"></div>
-      <div class="form-grupo"><label class="form-label">Urgência</label>
-        <select class="form-select" id="nec-urgencia">
-          <option value="alta">🔴 Alta — 24-48h</option>
-          <option value="media">🟡 Média — 7 dias</option>
-          <option value="baixa">🟢 Baixa — planejamento</option>
-        </select>
-      </div>
-      <div class="form-grupo full"><label class="form-label">Justificativa</label><textarea class="form-textarea" id="nec-justificativa"></textarea></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secundario" onclick="fecharModal('modal-necessidade')">Cancelar</button>
-      <button class="btn btn-acento" onclick="salvarNecessidade()">Publicar</button>
-    </div>
-  </div>
 </div>
 </body></html>`;
   
@@ -906,6 +928,68 @@ function renderGraficos() {
   }
 }
 
+// ===================== NECESSIDADES (MURAL) =====================
+let filtroNecStatus = 'aberta';
+function renderNecessidades() {
+  let lista = (window.necessidades||[]);
+  if (filtroNecStatus) lista = lista.filter(n => n.status === filtroNecStatus);
+  const div = document.getElementById('lista-necessidades');
+  if (!div) return;
+  div.innerHTML = lista.length === 0
+    ? `<div class="vazio"><div class="vazio-icon">🚨</div><div class="vazio-titulo">Nenhuma necessidade encontrada</div></div>`
+    : `<div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start">${lista.map(necessidadeCard).join('')}</div>`;
+}
+
+function filtrarNecessidades(v) { filtroNecStatus = v; renderNecessidades(); }
+
+function necessidadeCard(n) {
+  const mun = (window.municipios||[]).find(m => m.id === n.municipioId);
+  const urgBadges = { alta: 'badge-critico', media: 'badge-alerta', baixa: 'badge-pendente' };
+  const urgLabels = { alta: '🔴 Alta', media: '🟡 Média', baixa: '🟢 Baixa' };
+  const statusBadges = { aberta: 'badge-pendente', atendida: 'badge-ok' };
+  const statusLabels = { aberta: 'Em aberto', atendida: 'Atendida' };
+  const acoes = n.status === 'aberta'
+    ? `<button class="btn btn-acento btn-sm" onclick="abrirSolicitacaoDeNecessidade('${n.id}')">📋 Abrir Solicitação</button>
+       <button class="btn btn-secundario btn-sm" onclick="encerrarNecessidade('${n.id}')">✓ Marcar Atendida</button>
+       <button class="btn btn-perigo btn-sm" onclick="excluirNecessidade('${n.id}')">✕ Excluir</button>`
+    : `<button class="btn btn-perigo btn-sm" onclick="excluirNecessidade('${n.id}')">✕ Excluir</button>`;
+  return `<div class="sol-card">
+    <div class="sol-card-header">
+      <div><div class="sol-card-titulo">${n.medicamento} — ${n.quantidade}</div><div class="sol-card-meta">${mun ? mun.nome : '—'} · ${formatarDataHora(n.data)}</div></div>
+      <span class="badge ${urgBadges[n.urgencia]||''}">${urgLabels[n.urgencia]||n.urgencia}</span>
+    </div>
+    <div class="sol-card-body">${n.justificativa || ''}</div>
+    <div style="margin-bottom:8px"><span class="badge ${statusBadges[n.status]||''}">${statusLabels[n.status]||n.status}</span></div>
+    <div class="sol-card-footer">${acoes}</div>
+  </div>`;
+}
+
+function abrirModalNecessidade() {
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('nec-municipio').innerHTML = opts;
+  ['nec-medicamento','nec-quantidade','nec-justificativa'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('nec-urgencia').value = 'media';
+  document.getElementById('modal-necessidade').classList.add('aberto');
+}
+
+// Abre a modal de solicitação já pré-preenchida a partir de um item do mural de necessidades
+window.necessidadeAutoFill = null;
+window.abrirSolicitacaoDeNecessidade = function(necId) {
+  const nec = (window.necessidades||[]).find(n => n.id === necId);
+  if (!nec) return;
+  const opts = '<option value="">Selecione...</option>' + (window.municipios||[]).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('sol-solicitante').innerHTML = opts;
+  document.getElementById('sol-cedente').innerHTML = opts;
+  document.getElementById('sol-solicitante').value = nec.municipioId;
+  document.getElementById('sol-medicamento').innerHTML = '<option value="">Selecione o município cedente primeiro...</option>';
+  document.getElementById('sol-quantidade').value = '';
+  document.getElementById('sol-quantidade').removeAttribute('max');
+  document.getElementById('sol-processo').value = '';
+  document.getElementById('sol-justificativa').value = nec.justificativa || '';
+  document.getElementById('sol-necessidade-id').value = nec.id;
+  window.necessidadeAutoFill = { medicamento: (nec.medicamento||'').toLowerCase(), quantidade: nec.quantidade };
+  document.getElementById('modal-solicitacao').classList.add('aberto');
+};
 // ===================== UTILS =====================
 function fecharModal(id) { const el = document.getElementById(id); if(el) el.classList.remove('aberto'); }
 document.querySelectorAll('.modal-overlay').forEach(m => { if(m) m.addEventListener('click', e => { if (e.target === m) m.classList.remove('aberto'); }); });
