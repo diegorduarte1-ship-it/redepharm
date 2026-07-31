@@ -1,1 +1,686 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setor de Compras — Controle de Processos · SUS/MG</title>
+
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // =====================================================
+  // CONFIGURAÇÃO DO FIREBASE
+  // Já preenchido com o MESMO projeto Firebase do RedePharm.
+  // Isso cria uma coleção nova chamada "processos" nesse mesmo
+  // banco, sem interferir em nada do RedePharm (municipios,
+  // estoques, solicitacoes, necessidades continuam intactos).
+  // =====================================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyATiNzZQZ5pNl0TJ2gdeoXzo5TTBQdCKno",
+    authDomain: "redepharm.firebaseapp.com",
+    projectId: "redepharm",
+    storageBucket: "redepharm.firebasestorage.app",
+    messagingSenderId: "838771206745",
+    appId: "1:838771206745:web:8d379bf1e607f656d01f48"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  window.db = db;
+
+  window.processos = [];
+
+  onSnapshot(query(collection(db, "processos"), orderBy("criadoEm", "desc")), snap => {
+    window.processos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (typeof renderTudo === 'function') renderTudo();
+  });
+
+  window.salvarProcesso = async function() {
+    const id = document.getElementById('proc-id').value;
+    const nome = document.getElementById('proc-nome').value.trim();
+    const responsavel = document.getElementById('proc-responsavel').value.trim();
+    if (!nome) { alert('Preencha o nome do processo.'); return; }
+    const dados = {
+      nome,
+      responsavel,
+      urgencia: document.getElementById('proc-urgencia').value,
+      status: document.getElementById('proc-status').value,
+      solicitadoEm: document.getElementById('proc-solicitado').value,
+      envioSempla: document.getElementById('proc-envio').value,
+      url: document.getElementById('proc-url').value.trim(),
+      observacoes: document.getElementById('proc-obs').value.trim(),
+      atualizadoEm: new Date().toISOString()
+    };
+    try {
+      if (id) {
+        await updateDoc(doc(db, "processos", id), dados);
+      } else {
+        dados.criadoEm = new Date().toISOString();
+        await addDoc(collection(db, "processos"), dados);
+      }
+      fecharModal();
+    } catch(e) { alert('ERRO: ' + e.message + ' | código: ' + e.code); }
+  };
+
+  window.excluirProcesso = async function(id) {
+    if (!confirm('Excluir este processo definitivamente?')) return;
+    try { await deleteDoc(doc(db, "processos", id)); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  window.moverStatus = async function(id, novoStatus) {
+    try { await updateDoc(doc(db, "processos", id), { status: novoStatus, atualizadoEm: new Date().toISOString() }); }
+    catch(e) { alert('Erro: ' + e.message); }
+  };
+
+  // =====================================================
+  // IMPORTAÇÃO ÚNICA DOS DADOS DO NOTION (planilha "Setor de Compras")
+  // =====================================================
+  const DADOS_IMPORTACAO_NOTION = [
+  {
+    "nome": "Abertura de processo para aquisição de materiais odontológicos do processo frustrado",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-08-04",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de Adesão de materiais de limpeza e artigos descartáveis",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_andamento",
+    "solicitadoEm": "2026-07-30",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Documentação para justificativa do aluguel Ronaldo José Joaquim",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "concluido",
+    "solicitadoEm": "2026-07-29",
+    "envioSempla": "2026-07-29",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Documentação para abertura de PAAR para a empresa D. Mello, referente a não entrega dos materiais gráficos",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_andamento",
+    "solicitadoEm": "2026-07-31",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Documentação para notificação da empresa Air Liquide referente ao atraso dos serviços prestados",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-07-31",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de locação de imóvel, Centro Multiprofissional de Saúde Mental",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-08-05",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de Rastreamento de Veículos",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-08-10",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de Monitoramento por vídeo para as unidades de saúde",
+    "responsavel": "Michelle",
+    "urgencia": "normal",
+    "status": "em_andamento",
+    "solicitadoEm": "2026-08-14",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de manutenção preventiva e corretiva dos consultórios odontológicos",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-09-11",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de contratação de empresa para prestação de serviços médicos nas unidades de saúde",
+    "responsavel": "",
+    "urgencia": "urgente",
+    "status": "nao_iniciado",
+    "solicitadoEm": "2026-09-30",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Documentação para aditamento de prazo do contrato nº 098/2021",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "aguardando_terceiros",
+    "solicitadoEm": "2026-07-31",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de locação de imóvel, ESF Canaã",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "aguardando_terceiros",
+    "solicitadoEm": "2026-07-31",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo compartilhado de serviços de mão de obra",
+    "responsavel": "",
+    "urgencia": "normal",
+    "status": "aguardando_terceiros",
+    "solicitadoEm": "2026-08-21",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Solicitar pedido de contrato referente ao transporte sanitário pelo CISMAS, contrato nº 106/2025",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "2026-07-29",
+    "envioSempla": "2026-07-30",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo compartilhado de periféricos e equipamentos de informática",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_andamento",
+    "solicitadoEm": "2026-08-07",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Solicitar pedido de contrato referente a hospedagem de pacientes em Poços de Caldas/MG, contrato nº 011/2025",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "2026-07-29",
+    "envioSempla": "2026-07-30",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de seguro de veículos",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "2026-07-22",
+    "envioSempla": "2026-07-22",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de locação de imóvel, Vigilância Epidemiológica",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "2026-07-17",
+    "envioSempla": "2026-07-20",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo compartilhado de ração canina",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "2026-07-15",
+    "envioSempla": "2026-07-15",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Documentação para aditamento de prazo do contrato nº 093/2025, Messias Neto Próteses LTDA",
+    "responsavel": "Gabriel",
+    "urgencia": "normal",
+    "status": "concluido",
+    "solicitadoEm": "2026-07-14",
+    "envioSempla": "2026-07-27",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de Processo de manutenção de Câmaras Frias da Farmácia e Epidemiologia",
+    "responsavel": "Michelle",
+    "urgencia": "urgente",
+    "status": "aguardando_terceiros",
+    "solicitadoEm": "2026-07-30",
+    "envioSempla": "2026-08-03",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Solicitar pedido de credenciamento de manutenção do gerador da Farmácia Integrada da Varginha.",
+    "responsavel": "Michelle",
+    "urgencia": "normal",
+    "status": "em_andamento",
+    "solicitadoEm": "2026-07-24",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo para aquisição de câmaras de conservação para farmácia",
+    "responsavel": "Tânia",
+    "urgencia": "normal",
+    "status": "aguardando_terceiros",
+    "solicitadoEm": "2026-07-31",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo de Desfibrilador",
+    "responsavel": "Tânia",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "",
+    "envioSempla": "2026-07-28",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo para aquisição de testes de Influenza",
+    "responsavel": "Tânia",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "",
+    "envioSempla": "2026-07-28",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo para aquisição de veículo para a Vigilância Sanitária",
+    "responsavel": "Tânia",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  },
+  {
+    "nome": "Abertura de processo para aquisição de telas de proteção para a Vigilância Sanitária",
+    "responsavel": "Michelle",
+    "urgencia": "normal",
+    "status": "em_processo_sempla",
+    "solicitadoEm": "",
+    "envioSempla": "",
+    "url": "",
+    "observacoes": ""
+  }
+];
+
+  window.importarDadosNotion = async function() {
+    if ((window.processos||[]).length > 0) {
+      if (!confirm('Já existem ' + window.processos.length + ' processo(s) cadastrado(s). Importar mesmo assim pode duplicar itens. Deseja continuar?')) return;
+    } else {
+      if (!confirm('Importar os ' + DADOS_IMPORTACAO_NOTION.length + ' processos da planilha do Notion agora?')) return;
+    }
+    const btn = document.getElementById('btn-importar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    try {
+      for (const item of DADOS_IMPORTACAO_NOTION) {
+        await addDoc(collection(db, "processos"), { ...item, criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() });
+      }
+      alert('Importação concluída: ' + DADOS_IMPORTACAO_NOTION.length + ' processos adicionados.');
+      if (btn) btn.remove();
+    } catch(e) {
+      alert('Erro na importação: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Importar dados do Notion'; }
+    }
+  };
+</script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:ital,wght@0,600;0,700;0,900;1,500&display=swap');
+
+  :root {
+    --verde: #1a4a3a; --verde-medio: #2d6b52; --verde-claro: #4a9470;
+    --verde-bg: #f0f7f4; --creme: #fafaf8; --borda: #e2e8e5;
+    --texto: #1a2420; --cinza: #6b7c75; --cinza-claro: #f4f6f5;
+    --acento: #c8863a; --acento-bg: #fef7ed;
+    --azul: #3a6ea5; --azul-bg: #eef3f9;
+    --vermelho: #b3423a; --vermelho-bg: #fdf0ef;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: var(--creme); color: var(--texto); }
+  h1, h2, .display { font-family: 'Fraunces', serif; }
+
+  header {
+    background: var(--verde); color: white; padding: 18px 28px;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+  }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header p { font-size: 12.5px; color: rgba(255,255,255,0.65); margin-top: 2px; }
+  .badge-cloud { background: rgba(255,255,255,0.12); padding: 5px 12px; border-radius: 20px; font-size: 12px; }
+  .header-right { display: flex; gap: 10px; align-items: center; }
+
+  .btn {
+    border: none; border-radius: 8px; padding: 9px 16px; font-family: inherit;
+    font-size: 13.5px; font-weight: 600; cursor: pointer; transition: 0.15s;
+  }
+  .btn-primario { background: var(--acento); color: white; }
+  .btn-primario:hover { background: #b3752f; }
+  .btn-secundario { background: white; border: 1px solid var(--borda); color: var(--texto); }
+  .btn-secundario:hover { background: var(--cinza-claro); }
+  .btn-perigo { background: var(--vermelho-bg); color: var(--vermelho); }
+  .btn-perigo:hover { background: #f9dedb; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  .barra-filtros {
+    display: flex; gap: 10px; flex-wrap: wrap; padding: 16px 28px; background: white;
+    border-bottom: 1px solid var(--borda); align-items: center;
+  }
+  .form-input, .form-select, .form-textarea {
+    border: 1px solid var(--borda); border-radius: 8px; padding: 9px 12px;
+    font-family: inherit; font-size: 13.5px; background: white; color: var(--texto);
+  }
+  .form-textarea { resize: vertical; min-height: 70px; width: 100%; }
+  .form-input:focus, .form-select:focus, .form-textarea:focus { outline: 2px solid var(--verde-claro); outline-offset: 1px; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; padding: 18px 28px 0;
+  }
+  .stat-card {
+    background: white; border: 1px solid var(--borda); border-radius: 12px; padding: 14px 16px;
+  }
+  .stat-label { font-size: 11.5px; color: var(--cinza); text-transform: uppercase; letter-spacing: 0.03em; }
+  .stat-valor { font-family: 'Fraunces', serif; font-size: 28px; font-weight: 700; margin-top: 4px; }
+
+  .kanban {
+    display: flex; gap: 16px; padding: 20px 28px 40px; overflow-x: auto; align-items: flex-start;
+  }
+  .coluna { min-width: 270px; max-width: 270px; flex-shrink: 0; }
+  .coluna-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; border-radius: 10px 10px 0 0; font-weight: 700; font-size: 13px; color: white;
+  }
+  .coluna-count { background: rgba(255,255,255,0.25); border-radius: 20px; padding: 1px 9px; font-size: 12px; }
+  .coluna-corpo {
+    background: var(--cinza-claro); border-radius: 0 0 10px 10px; padding: 10px; min-height: 120px;
+    display: flex; flex-direction: column; gap: 10px; transition: background 0.15s;
+  }
+  .coluna-corpo.drag-over { background: var(--verde-bg); }
+
+  .card {
+    background: white; border: 1px solid var(--borda); border-radius: 10px; padding: 12px;
+    cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .card:active { cursor: grabbing; }
+  .card.atrasado { border-left: 4px solid var(--vermelho); }
+  .card.urgente { border-left: 4px solid var(--acento); }
+  .card.atrasado.urgente { border-left: 4px solid var(--vermelho); }
+  .card-titulo { font-size: 13.5px; font-weight: 600; line-height: 1.35; margin-bottom: 8px; }
+  .card-meta { font-size: 11.5px; color: var(--cinza); display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; width: fit-content; }
+  .tag-urgente { background: var(--acento-bg); color: var(--acento); }
+  .tag-atrasado { background: var(--vermelho-bg); color: var(--vermelho); }
+  .card-acoes { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .card-select { font-size: 11.5px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--borda); flex: 1; min-width: 0; }
+
+  .vazio-coluna { text-align: center; padding: 24px 8px; color: var(--cinza); font-size: 12px; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(26,36,32,0.45);
+    align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal-overlay.aberto { display: flex; }
+  .modal { background: white; border-radius: 14px; padding: 28px; max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal-titulo { font-family: 'Fraunces', serif; font-size: 19px; font-weight: 700; color: var(--verde); margin-bottom: 18px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+  .form-grupo.full { grid-column: 1 / -1; }
+  .form-label { font-size: 12.5px; font-weight: 600; margin-bottom: 5px; display: block; color: var(--texto); }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 10px; }
+
+  @media (max-width: 640px) {
+    header, .barra-filtros, .stats, .kanban { padding-left: 14px; padding-right: 14px; }
+    .form-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Setor de Compras</h1>
+    <p>Controle de Processos · SUS/MG</p>
+  </div>
+  <div class="header-right">
+    <span class="badge-cloud">☁ Firebase</span>
+    <button class="btn btn-secundario" id="btn-importar" onclick="importarDadosNotion()">📥 Importar dados do Notion</button>
+    <button class="btn btn-primario" onclick="abrirModal()">+ Novo Processo</button>
+  </div>
+</header>
+
+<div class="barra-filtros">
+  <input type="text" class="form-input" id="filtro-busca" placeholder="Buscar por nome..." style="min-width:220px" oninput="renderTudo()">
+  <select class="form-select" id="filtro-responsavel" onchange="renderTudo()">
+    <option value="">Todos os responsáveis</option>
+  </select>
+  <select class="form-select" id="filtro-urgencia" onchange="renderTudo()">
+    <option value="">Toda urgência</option>
+    <option value="urgente">🔶 Urgente</option>
+    <option value="normal">Normal</option>
+  </select>
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--texto)">
+    <input type="checkbox" id="filtro-atrasado" onchange="renderTudo()"> Só atrasados
+  </label>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="kanban" id="kanban"></div>
+
+<div class="modal-overlay" id="modal-processo">
+  <div class="modal">
+    <div class="modal-titulo" id="modal-titulo-texto">Novo Processo</div>
+    <input type="hidden" id="proc-id">
+    <div class="form-grid">
+      <div class="form-grupo full"><label class="form-label">Nome do Processo *</label><input type="text" class="form-input" id="proc-nome" placeholder="Ex: Abertura de processo de..."></div>
+      <div class="form-grupo"><label class="form-label">Responsável</label><input type="text" class="form-input" id="proc-responsavel" list="lista-responsaveis" placeholder="Ex: Gabriel"></div>
+      <datalist id="lista-responsaveis"></datalist>
+      <div class="form-grupo"><label class="form-label">Urgência</label>
+        <select class="form-select" id="proc-urgencia">
+          <option value="normal">Normal</option>
+          <option value="urgente">🔶 Urgente</option>
+        </select>
+      </div>
+      <div class="form-grupo"><label class="form-label">Solicitado em</label><input type="date" class="form-input" id="proc-solicitado"></div>
+      <div class="form-grupo"><label class="form-label">Envio para SEMPLA</label><input type="date" class="form-input" id="proc-envio"></div>
+      <div class="form-grupo full"><label class="form-label">Status</label>
+        <select class="form-select" id="proc-status" style="width:100%">
+          <option value="nao_iniciado">Não Iniciado</option>
+          <option value="em_andamento">Em Andamento</option>
+          <option value="aguardando_terceiros">Aguardando Terceiros</option>
+          <option value="em_processo_sempla">Em Processo SEMPLA</option>
+          <option value="concluido">Concluído</option>
+        </select>
+      </div>
+      <div class="form-grupo full"><label class="form-label">Link / URL (opcional)</label><input type="text" class="form-input" id="proc-url" placeholder="https://..."></div>
+      <div class="form-grupo full"><label class="form-label">Observações</label><textarea class="form-textarea" id="proc-obs"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="fecharModal()">Cancelar</button>
+      <button class="btn btn-primario" onclick="salvarProcesso()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLUNAS = [
+  { id: 'nao_iniciado', label: 'Não Iniciado', cor: '#6b7c75' },
+  { id: 'em_andamento', label: 'Em Andamento', cor: '#2d6b52' },
+  { id: 'aguardando_terceiros', label: 'Aguardando Terceiros', cor: '#c8863a' },
+  { id: 'em_processo_sempla', label: 'Em Processo SEMPLA', cor: '#3a6ea5' },
+  { id: 'concluido', label: 'Concluído', cor: '#1a4a3a' }
+];
+const STATUS_LABEL = Object.fromEntries(COLUNAS.map(c => [c.id, c.label]));
+
+function formatarData(iso) {
+  if (!iso) return '';
+  const [ano, mes, dia] = iso.split('-');
+  if (!dia) return iso;
+  return `${dia}/${mes}/${ano}`;
+}
+
+function ehAtrasado(p) {
+  if (!p.envioSempla || p.status === 'concluido') return false;
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  return new Date(p.envioSempla + 'T00:00:00') < hoje;
+}
+
+function aplicarFiltros(lista) {
+  const busca = (document.getElementById('filtro-busca').value || '').toLowerCase();
+  const resp = document.getElementById('filtro-responsavel').value;
+  const urg = document.getElementById('filtro-urgencia').value;
+  const soAtrasado = document.getElementById('filtro-atrasado').checked;
+  return lista.filter(p => {
+    if (busca && !(p.nome||'').toLowerCase().includes(busca)) return false;
+    if (resp && p.responsavel !== resp) return false;
+    if (urg && p.urgencia !== urg) return false;
+    if (soAtrasado && !ehAtrasado(p)) return false;
+    return true;
+  });
+}
+
+function renderTudo() {
+  const todos = window.processos || [];
+
+  // popula filtro de responsáveis dinamicamente
+  const respSelect = document.getElementById('filtro-responsavel');
+  const respAtual = respSelect.value;
+  const responsaveis = [...new Set(todos.map(p => p.responsavel).filter(Boolean))].sort();
+  respSelect.innerHTML = '<option value="">Todos os responsáveis</option>' + responsaveis.map(r => `<option value="${r}">${r}</option>`).join('');
+  respSelect.value = respAtual;
+  document.getElementById('lista-responsaveis').innerHTML = responsaveis.map(r => `<option value="${r}">`).join('');
+
+  const lista = aplicarFiltros(todos);
+  renderStats(todos);
+  renderKanban(lista);
+}
+
+function renderStats(todos) {
+  const hoje = new Date();
+  const urgentes = todos.filter(p => p.urgencia === 'urgente' && p.status !== 'concluido');
+  const atrasados = todos.filter(ehAtrasado);
+  const concluidosMes = todos.filter(p => p.status === 'concluido' && p.atualizadoEm && new Date(p.atualizadoEm).getMonth() === hoje.getMonth() && new Date(p.atualizadoEm).getFullYear() === hoje.getFullYear());
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Total de Processos</div><div class="stat-valor">${todos.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Urgentes em Aberto</div><div class="stat-valor" style="color:${urgentes.length ? 'var(--acento)' : 'var(--verde)'}">${urgentes.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Atrasados</div><div class="stat-valor" style="color:${atrasados.length ? 'var(--vermelho)' : 'var(--verde)'}">${atrasados.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Concluídos este mês</div><div class="stat-valor" style="color:var(--verde)">${concluidosMes.length}</div></div>
+  `;
+}
+
+function renderKanban(lista) {
+  const kanban = document.getElementById('kanban');
+  kanban.innerHTML = COLUNAS.map(col => {
+    const itens = lista.filter(p => p.status === col.id)
+      .sort((a,b) => (b.urgencia === 'urgente') - (a.urgencia === 'urgente'));
+    return `
+      <div class="coluna">
+        <div class="coluna-header" style="background:${col.cor}">
+          <span>${col.label}</span>
+          <span class="coluna-count">${itens.length}</span>
+        </div>
+        <div class="coluna-corpo" ondragover="event.preventDefault(); this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="onDrop(event, '${col.id}')">
+          ${itens.length === 0 ? '<div class="vazio-coluna">Nenhum processo aqui</div>' : itens.map(cardHTML).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function cardHTML(p) {
+  const atrasado = ehAtrasado(p);
+  const classes = ['card', p.urgencia === 'urgente' ? 'urgente' : '', atrasado ? 'atrasado' : ''].filter(Boolean).join(' ');
+  return `<div class="${classes}" draggable="true" ondragstart="onDragStart(event,'${p.id}')" onclick="abrirModal('${p.id}')">
+    <div class="card-titulo">${p.nome}</div>
+    <div class="card-meta">
+      ${p.responsavel ? '<span>👤 ' + p.responsavel + '</span>' : ''}
+      ${p.envioSempla ? '<span>📅 Envio SEMPLA: ' + formatarData(p.envioSempla) + '</span>' : ''}
+      ${p.url ? '<span>🔗 <a href="' + p.url + '" target="_blank" onclick="event.stopPropagation()">Link do processo</a></span>' : ''}
+    </div>
+    ${p.urgencia === 'urgente' ? '<span class="tag tag-urgente">🔶 Urgente</span>' : ''}
+    ${atrasado ? '<span class="tag tag-atrasado">⚠ Atrasado</span>' : ''}
+    <div class="card-acoes" onclick="event.stopPropagation()">
+      <select class="card-select" onchange="moverStatus('${p.id}', this.value)">
+        ${COLUNAS.map(c => `<option value="${c.id}" ${c.id === p.status ? 'selected' : ''}>${c.label}</option>`).join('')}
+      </select>
+      <button class="btn btn-perigo btn-sm" onclick="excluirProcesso('${p.id}')">✕</button>
+    </div>
+  </div>`;
+}
+
+function onDragStart(ev, id) { ev.dataTransfer.setData('text/plain', id); }
+function onDrop(ev, novoStatus) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  const id = ev.dataTransfer.getData('text/plain');
+  if (id) moverStatus(id, novoStatus);
+}
+
+function abrirModal(id) {
+  const p = id ? (window.processos||[]).find(x => x.id === id) : null;
+  document.getElementById('modal-titulo-texto').textContent = p ? 'Editar Processo' : 'Novo Processo';
+  document.getElementById('proc-id').value = p ? p.id : '';
+  document.getElementById('proc-nome').value = p ? p.nome : '';
+  document.getElementById('proc-responsavel').value = p ? (p.responsavel||'') : '';
+  document.getElementById('proc-urgencia').value = p ? (p.urgencia||'normal') : 'normal';
+  document.getElementById('proc-status').value = p ? p.status : 'nao_iniciado';
+  document.getElementById('proc-solicitado').value = p ? (p.solicitadoEm||'') : '';
+  document.getElementById('proc-envio').value = p ? (p.envioSempla||'') : '';
+  document.getElementById('proc-url').value = p ? (p.url||'') : '';
+  document.getElementById('proc-obs').value = p ? (p.observacoes||'') : '';
+  document.getElementById('modal-processo').classList.add('aberto');
+}
+
+function fecharModal() { document.getElementById('modal-processo').classList.remove('aberto'); }
+
+renderTudo();
+</script>
+</body>
+</html>
 
